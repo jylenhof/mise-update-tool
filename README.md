@@ -101,7 +101,7 @@ jobs:
 Upgrade all local tools except `node`:
 
 ```yaml
-- uses: jylenhof/mise-update-tool@v1
+- uses: jylenhof/mise-update-tool@v1.0.0
   with:
     token: ${{ steps.generate-token.outputs.token }}
     keep: node
@@ -110,7 +110,7 @@ Upgrade all local tools except `node`:
 Upgrade only `python` and `uv`:
 
 ```yaml
-- uses: jylenhof/mise-update-tool@v1
+- uses: jylenhof/mise-update-tool@v1.0.0
   with:
     token: ${{ steps.generate-token.outputs.token }}
     tools: python, uv
@@ -119,7 +119,7 @@ Upgrade only `python` and `uv`:
 Open one pull request per upgraded tool:
 
 ```yaml
-- uses: jylenhof/mise-update-tool@v1
+- uses: jylenhof/mise-update-tool@v1.0.0
   with:
     token: ${{ steps.generate-token.outputs.token }}
     pull-request-strategy: per-tool
