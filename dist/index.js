@@ -16462,11 +16462,13 @@ var ToolSelector = class {
 		throw new Error(`Invalid pull-request-strategy: ${value}. Expected "single" or "per-tool".`);
 	}
 	resolveUpgradeTools(allLocalTools, tools, keep) {
+		const available = new Set(allLocalTools);
 		const keepSet = new Set(keep);
+		const unknownKeep = keep.filter((tool) => !available.has(tool));
+		if (unknownKeep.length > 0) throw new Error(`Unknown local mise tools in keep: ${unknownKeep.join(", ")}. Available: ${allLocalTools.join(", ")}`);
 		const overlappingKeep = tools.filter((tool) => keepSet.has(tool));
 		if (overlappingKeep.length > 0) throw new Error(`Tools cannot appear in both tools and keep: ${overlappingKeep.join(", ")}`);
 		if (tools.length > 0) {
-			const available = new Set(allLocalTools);
 			const unknown = tools.filter((tool) => !available.has(tool));
 			if (unknown.length > 0) throw new Error(`Unknown local mise tools: ${unknown.join(", ")}. Available: ${allLocalTools.join(", ")}`);
 			return tools.filter((tool) => !keepSet.has(tool));

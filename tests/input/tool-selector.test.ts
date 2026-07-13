@@ -29,6 +29,12 @@ describe('ToolSelector', () => {
       );
     });
 
+    it('validates keep entries against local config', () => {
+      expect(() => selector.resolveUpgradeTools(localTools, [], ['terraform'])).toThrow(
+        /Unknown local mise tools in keep/,
+      );
+    });
+
     it('rejects tools listed in both tools and keep', () => {
       expect(() => selector.resolveUpgradeTools(localTools, ['node'], ['node'])).toThrow(
         /both tools and keep/,

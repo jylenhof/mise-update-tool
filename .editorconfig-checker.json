@@ -1,0 +1,3 @@
+{
+  "Exclude": ["LICENSE", "dist/index.js"]
+}

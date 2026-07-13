@@ -31,14 +31,22 @@ export class ToolSelector {
   }
 
   resolveUpgradeTools(allLocalTools: string[], tools: string[], keep: string[]): string[] {
+    const available = new Set(allLocalTools);
     const keepSet = new Set(keep);
+
+    const unknownKeep = keep.filter((tool) => !available.has(tool));
+    if (unknownKeep.length > 0) {
+      throw new Error(
+        `Unknown local mise tools in keep: ${unknownKeep.join(', ')}. Available: ${allLocalTools.join(', ')}`,
+      );
+    }
+
     const overlappingKeep = tools.filter((tool) => keepSet.has(tool));
     if (overlappingKeep.length > 0) {
       throw new Error(`Tools cannot appear in both tools and keep: ${overlappingKeep.join(', ')}`);
     }
 
     if (tools.length > 0) {
-      const available = new Set(allLocalTools);
       const unknown = tools.filter((tool) => !available.has(tool));
       if (unknown.length > 0) {
         throw new Error(

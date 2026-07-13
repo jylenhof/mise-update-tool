@@ -1,7 +1,8 @@
 import * as core from '@actions/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-
+import { ToolSelector } from '../src/input/tool-selector.js';
 import { MiseUpdateAction } from '../src/mise-update-action.js';
+import { UpgradeStrategyFactory } from '../src/strategy/upgrade-strategy-factory.js';
 import { nodeSnapshot } from './helpers/fixtures.js';
 import { baseInputs, createMockRunner } from './helpers/mocks.js';
 
@@ -68,5 +69,22 @@ describe('MiseUpdateAction', () => {
 
   it('creates a default action instance', () => {
     expect(MiseUpdateAction.createDefault()).toBeInstanceOf(MiseUpdateAction);
+  });
+
+  it('rejects tools not listed by mise ls --local --json', async () => {
+    const inputReader = {
+      read: vi.fn().mockReturnValue({ ...baseInputs, tools: ['terraform'] }),
+    };
+    const runner = createMockRunner({
+      'ls --local --json': JSON.stringify(nodeSnapshot),
+    });
+    const action = new MiseUpdateAction(
+      inputReader as never,
+      new ToolSelector(),
+      new UpgradeStrategyFactory(runner as never),
+      runner as never,
+    );
+
+    await expect(action.run()).rejects.toThrow(/Unknown local mise tools: terraform/);
   });
 });

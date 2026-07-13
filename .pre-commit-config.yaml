@@ -99,17 +99,24 @@ repos:
         name: TypeScript typecheck
         entry: aube exec tsc --noEmit
         language: system
-        files: '(^src/.*\.tsx?$|^tests/.*\.tsx?$|tsconfig.*\.json$|vite\.config\.ts$|vitest\.config\.ts$|biome\.json$|package\.json$)'
+        files: >-
+          (^src/.*\.tsx?$|^tests/.*\.tsx?$|tsconfig.*\.json$|vite\.config\.ts$|
+          vitest\.config\.ts$|biome\.json$|package\.json$)
         pass_filenames: false
       - id: vitest
         name: Vitest
         entry: aube exec vitest run --coverage
         language: system
-        files: '(^src/.*\.tsx?$|^tests/.*\.tsx?$|tsconfig.*\.json$|vite\.config\.ts$|vitest\.config\.ts$|biome\.json$|package\.json$)'
+        files: >-
+          (^src/.*\.tsx?$|^tests/.*\.tsx?$|tsconfig.*\.json$|vite\.config\.ts$|
+          vitest\.config\.ts$|biome\.json$|package\.json$)
         pass_filenames: false
       - id: action-bundle
         name: action bundle build
-        entry: bash -c 'aube exec vite build && git diff --quiet dist/ || { echo "dist/ is out of date; run \"aube exec vite build\" and stage dist/"; exit 1; }'
+        entry: >-
+          bash -c 'aube exec vite build && git diff --quiet dist/ ||
+          { echo "dist/ is out of date; run \"aube exec vite build\" and stage dist/";
+          exit 1; }'
         language: system
         files: '(^src/.*\.tsx?$|tsconfig.*\.json$|vite\.config\.ts$|package\.json$)'
         pass_filenames: false
