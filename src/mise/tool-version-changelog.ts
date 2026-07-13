@@ -59,7 +59,9 @@ export class ToolVersionChangelog {
 
     const rows = changes.map(
       (change) =>
-        `| \`${change.name}\` | \`${change.previousRequested}\` → \`${change.nextRequested}\` | \`${change.previousVersion}\` → \`${change.nextVersion}\` |`,
+        `| \`${change.name}\` | ` +
+        `\`${change.previousRequested}\` → \`${change.nextRequested}\` | ` +
+        `\`${change.previousVersion}\` → \`${change.nextVersion}\` |`,
     );
 
     return [
@@ -92,7 +94,8 @@ export class ToolVersionChangelog {
 
       return [
         '<details>',
-        `<summary>${change.name}: \`${change.previousVersion}\` → \`${change.nextVersion}\`${repositorySuffix}</summary>`,
+        `<summary>${change.name}: ` +
+          `\`${change.previousVersion}\` → \`${change.nextVersion}\`${repositorySuffix}</summary>`,
         '',
         notes,
         '',

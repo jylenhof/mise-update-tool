@@ -1,5 +1,7 @@
 name: Mise Update Tool
-description: Upgrade mise tools from the local config using `mise upgrade --bump --local` and optionally open one or more pull requests.
+description: >-
+  Upgrade mise tools from the local config using `mise upgrade --bump --local`
+  and optionally open one or more pull requests.
 branding:
   icon: arrow-up-circle
   color: blue
