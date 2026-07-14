@@ -1,11 +1,9 @@
 #:schema https://mise.jdx.dev/schema/mise.json
 
 [tools]  # tombi: format.rules.table-keys-order = "ascending"
-# Pin the Node.js version for the project
-node = "24"
-
+# tools to use on all my projects
+action-validator = "latest"
 actionlint = "latest"
-aube = "latest"
 editorconfig-checker = "latest"
 ghalint = "latest"
 pinact = "latest"
@@ -16,8 +14,13 @@ shellcheck = "latest"
 shfmt = "latest"
 tombi = "latest"
 uv = "latest"
+yamlfmt = "latest"
 yamllint = "latest"
 zizmor = "latest"
+
+aube = "latest"
+# Pin the Node.js version for the project
+node = "24"
 
 [env]
 # Optional: if your action needs environment variables for local tests

@@ -1,0 +1,9 @@
+{
+  "debug.javascript.defaultRuntimeExecutable": {
+    "pwa-node": "${workspaceFolder}/.vscode/mise-tools/node"
+  },
+  "shellcheck.executablePath": "${workspaceFolder}/.vscode/mise-tools/shellcheck",
+  "ruff.path": ["${workspaceFolder}/.vscode/mise-tools/ruff"],
+  "python.defaultInterpreterPath": "${workspaceFolder}/.vscode/mise-tools/python",
+  "ruff.interpreter": ["${workspaceFolder}/.vscode/mise-tools/python"]
+}
