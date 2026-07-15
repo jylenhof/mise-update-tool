@@ -9,6 +9,7 @@ import { ToolVersionChangelog } from '../mise/tool-version-changelog.js';
 import type { CreatePullRequestOptions, GitActor } from '../types.js';
 import { DEFAULT_GIT_ACTOR } from '../types.js';
 import { GitHubReleaseNotesFetcher } from './github-release-notes-fetcher.js';
+import { truncatePullRequestBody } from './pull-request-body-limits.js';
 import { PullRequestTitleBuilder } from './pull-request-title-builder.js';
 
 export class PullRequestCreator {
@@ -75,7 +76,7 @@ export class PullRequestCreator {
       sections.push('', 'Modified files:', ...modifiedFiles.map((file) => `- \`${file}\``));
     }
 
-    return sections.join('\n');
+    return truncatePullRequestBody(sections.join('\n'));
   }
 
   async create(options: CreatePullRequestOptions): Promise<string> {

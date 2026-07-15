@@ -19820,6 +19820,21 @@ function getOctokit(token, options, ...additionalPlugins) {
 	return new (GitHub.plugin(...additionalPlugins))(getOctokitOptions(token, options));
 }
 //#endregion
+//#region src/github/pull-request-body-limits.ts
+var GITHUB_PULL_REQUEST_BODY_MAX_LENGTH = 65536;
+var MAX_RELEASE_NOTE_BODY_LENGTH = 2e3;
+var PULL_REQUEST_BODY_TRUNCATION_NOTICE = "\n\n---\n\n_Pull request body truncated because it exceeded GitHub's 65536 character limit._";
+function truncateText(text, maxLength, notice = "… (truncated)") {
+	if (text.length <= maxLength) return text;
+	const budget = Math.max(0, maxLength - notice.length);
+	return `${text.slice(0, budget).trimEnd()}${notice}`;
+}
+function truncatePullRequestBody(body, maxLength = GITHUB_PULL_REQUEST_BODY_MAX_LENGTH) {
+	if (body.length <= maxLength) return body;
+	const budget = Math.max(0, maxLength - 88);
+	return `${body.slice(0, budget).trimEnd()}${PULL_REQUEST_BODY_TRUNCATION_NOTICE}`;
+}
+//#endregion
 //#region src/mise/tool-version-changelog.ts
 var ToolVersionChangelog = class {
 	static diff(before, after, tools) {
@@ -19856,16 +19871,21 @@ var ToolVersionChangelog = class {
 		const withNotes = changes.filter((change) => (change.releaseNotes?.length ?? 0) > 0);
 		if (withNotes.length === 0) return "";
 		const toolSections = withNotes.map((change) => {
-			const notes = (change.releaseNotes ?? []).map((release) => {
-				const body = release.body || "_No release notes provided._";
+			const allReleaseNotes = change.releaseNotes ?? [];
+			const releaseNotes = allReleaseNotes.slice(-10);
+			const omittedReleaseCount = allReleaseNotes.length - releaseNotes.length;
+			const notes = releaseNotes.map((release) => {
+				const body = truncateText(release.body || "_No release notes provided._", MAX_RELEASE_NOTE_BODY_LENGTH);
 				return `### ${release.tag}\n\n${body}`;
 			}).join("\n\n");
 			const repositorySuffix = change.githubRepo ? ` (${change.githubRepo})` : "";
+			const omittedReleaseNotice = omittedReleaseCount > 0 ? `_Omitted ${omittedReleaseCount} older release${omittedReleaseCount === 1 ? "" : "s"}._` : "";
 			return [
 				"<details>",
 				`<summary>${change.name}: \`${change.previousVersion}\` → \`${change.nextVersion}\`${repositorySuffix}</summary>`,
 				"",
 				notes,
+				...omittedReleaseNotice ? ["", omittedReleaseNotice] : [],
 				"",
 				"</details>"
 			].join("\n");
@@ -21411,7 +21431,7 @@ var PullRequestCreator = class PullRequestCreator {
 		const releaseNotes = ToolVersionChangelog.formatReleaseNotesCollapsible(versionChanges);
 		if (releaseNotes) sections.push("", releaseNotes);
 		if (modifiedFiles.length > 0) sections.push("", "Modified files:", ...modifiedFiles.map((file) => `- \`${file}\``));
-		return sections.join("\n");
+		return truncatePullRequestBody(sections.join("\n"));
 	}
 	async create(options) {
 		const branchName = PullRequestCreator.buildBranchName(options.branchPrefix, options.branchSuffix);

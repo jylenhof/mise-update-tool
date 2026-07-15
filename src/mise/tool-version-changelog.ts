@@ -1,3 +1,8 @@
+import {
+  MAX_RELEASE_NOTE_BODY_LENGTH,
+  MAX_RELEASES_PER_TOOL,
+  truncateText,
+} from '../github/pull-request-body-limits.js';
 import type { MiseLsLocalJson } from './mise-upgrader.js';
 
 export interface ReleaseNoteEntry {
@@ -83,14 +88,25 @@ export class ToolVersionChangelog {
     }
 
     const toolSections = withNotes.map((change) => {
-      const notes = (change.releaseNotes ?? [])
+      const allReleaseNotes = change.releaseNotes ?? [];
+      const releaseNotes = allReleaseNotes.slice(-MAX_RELEASES_PER_TOOL);
+      const omittedReleaseCount = allReleaseNotes.length - releaseNotes.length;
+
+      const notes = releaseNotes
         .map((release) => {
-          const body = release.body || '_No release notes provided._';
+          const body = truncateText(
+            release.body || '_No release notes provided._',
+            MAX_RELEASE_NOTE_BODY_LENGTH,
+          );
           return `### ${release.tag}\n\n${body}`;
         })
         .join('\n\n');
 
       const repositorySuffix = change.githubRepo ? ` (${change.githubRepo})` : '';
+      const omittedReleaseNotice =
+        omittedReleaseCount > 0
+          ? `_Omitted ${omittedReleaseCount} older release${omittedReleaseCount === 1 ? '' : 's'}._`
+          : '';
 
       return [
         '<details>',
@@ -98,6 +114,7 @@ export class ToolVersionChangelog {
           `\`${change.previousVersion}\` → \`${change.nextVersion}\`${repositorySuffix}</summary>`,
         '',
         notes,
+        ...(omittedReleaseNotice ? ['', omittedReleaseNotice] : []),
         '',
         '</details>',
       ].join('\n');
