@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.1](https://github.com/jylenhof/mise-update-tool/compare/v1.0.0...v1.0.1) (2026-07-15)
+
+
+### Bug Fixes
+
+* ship action bundle as index.cjs for ESM package type ([#6](https://github.com/jylenhof/mise-update-tool/issues/6)) ([9b3bb53](https://github.com/jylenhof/mise-update-tool/commit/9b3bb5315cf9078c57291ff638c672fd9fc8aaff))
+* truncate pull request body to fit GitHub limits ([#8](https://github.com/jylenhof/mise-update-tool/issues/8)) ([c964784](https://github.com/jylenhof/mise-update-tool/commit/c9647849d0d7585b6dec6510ba7fcddf8d93fcba))
+
 ## 1.0.0 (2026-07-13)
 
 
