@@ -5,8 +5,8 @@ export default defineConfig({
   build: {
     lib: {
       entry: './src/index.ts',
-      formats: ['cjs'], // Recommended for GitHub Actions entry points on Node
-      fileName: () => 'index.js',
+      formats: ['cjs'], // GitHub Actions entry point; .cjs avoids ESM/CJS clash with "type": "module"
+      fileName: () => 'index.cjs',
     },
     outDir: 'dist',
     minify: false, // Optional: easier to debug on GitHub when not minified
