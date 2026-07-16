@@ -1,3 +1,4 @@
+---
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -15,3 +16,20 @@ updates:
           - '*'
     cooldown:
       default-days: 7
+  - package-ecosystem: pre-commit
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "chore"
+    labels:
+      - dependencies
+    groups:
+      deps-pre-commit:
+        patterns:
+          - '*'
+    cooldown:
+      default-days: 7
+
+      ##### TODO need typescript here somewhere
