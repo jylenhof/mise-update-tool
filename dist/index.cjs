@@ -19824,6 +19824,19 @@ function getOctokit(token, options, ...additionalPlugins) {
 var GITHUB_PULL_REQUEST_BODY_MAX_LENGTH = 65536;
 var MAX_RELEASE_NOTE_BODY_LENGTH = 2e3;
 var PULL_REQUEST_BODY_TRUNCATION_NOTICE = "\n\n---\n\n_Pull request body truncated because it exceeded GitHub's 65536 character limit._";
+/** Zero-width space breaks GitHub @mention notifications while keeping text readable. */
+var MENTION_BREAK = "​";
+var GITHUB_USER = "[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?";
+var GITHUB_TEAM = "[a-zA-Z0-9](?:[a-zA-Z0-9_-]{0,38}[a-zA-Z0-9])?";
+/**
+* Neutralize GitHub @user / @org/team mentions so they are not notified when
+* release notes are pasted into a pull request body or comment.
+* Leaves email addresses (e.g. user@example.com) unchanged.
+*/
+function sanitizeGithubMentions(text) {
+	const pattern = new RegExp(`(^|[^a-zA-Z0-9._-])@(${GITHUB_USER}(?:\\/${GITHUB_TEAM})?)`, "gm");
+	return text.replace(pattern, `$1@${MENTION_BREAK}$2`);
+}
 function truncateText(text, maxLength, notice = "… (truncated)") {
 	if (text.length <= maxLength) return text;
 	const budget = Math.max(0, maxLength - notice.length);
@@ -19875,7 +19888,7 @@ var ToolVersionChangelog = class {
 			const releaseNotes = allReleaseNotes.slice(-10);
 			const omittedReleaseCount = allReleaseNotes.length - releaseNotes.length;
 			const notes = releaseNotes.map((release) => {
-				const body = truncateText(release.body || "_No release notes provided._", MAX_RELEASE_NOTE_BODY_LENGTH);
+				const body = truncateText(sanitizeGithubMentions(release.body || "_No release notes provided._"), MAX_RELEASE_NOTE_BODY_LENGTH);
 				return `### ${release.tag}\n\n${body}`;
 			}).join("\n\n");
 			const repositorySuffix = change.githubRepo ? ` (${change.githubRepo})` : "";

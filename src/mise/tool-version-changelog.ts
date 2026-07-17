@@ -1,6 +1,7 @@
 import {
   MAX_RELEASE_NOTE_BODY_LENGTH,
   MAX_RELEASES_PER_TOOL,
+  sanitizeGithubMentions,
   truncateText,
 } from '../github/pull-request-body-limits.js';
 import type { MiseLsLocalJson } from './mise-upgrader.js';
@@ -95,7 +96,7 @@ export class ToolVersionChangelog {
       const notes = releaseNotes
         .map((release) => {
           const body = truncateText(
-            release.body || '_No release notes provided._',
+            sanitizeGithubMentions(release.body || '_No release notes provided._'),
             MAX_RELEASE_NOTE_BODY_LENGTH,
           );
           return `### ${release.tag}\n\n${body}`;

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   GITHUB_PULL_REQUEST_BODY_MAX_LENGTH,
+  sanitizeGithubMentions,
   truncatePullRequestBody,
   truncateText,
 } from '../../src/github/pull-request-body-limits.js';
@@ -24,6 +25,30 @@ describe('pull-request-body-limits', () => {
 
     expect(truncated.length).toBeLessThanOrEqual(GITHUB_PULL_REQUEST_BODY_MAX_LENGTH);
     expect(truncated).toContain('65536 character limit');
+  });
+});
+
+describe('sanitizeGithubMentions', () => {
+  const zwsp = '\u200B';
+
+  it('breaks user and team mentions', () => {
+    expect(sanitizeGithubMentions('Thanks @alice and @org/maintainers!')).toBe(
+      `Thanks @${zwsp}alice and @${zwsp}org/maintainers!`,
+    );
+  });
+
+  it('breaks mentions at the start of a line', () => {
+    expect(sanitizeGithubMentions('@bob fixed a bug')).toBe(`@${zwsp}bob fixed a bug`);
+  });
+
+  it('leaves email addresses unchanged', () => {
+    expect(sanitizeGithubMentions('Contact user@example.com for help')).toBe(
+      'Contact user@example.com for help',
+    );
+  });
+
+  it('leaves text without mentions unchanged', () => {
+    expect(sanitizeGithubMentions('No mentions here')).toBe('No mentions here');
   });
 });
 
@@ -62,6 +87,29 @@ describe('ToolVersionChangelog release note limits', () => {
     expect(markdown).toContain('v1.11.0');
     expect(markdown).not.toContain('v1.0.0');
     expect(markdown).toContain('_Omitted 2 older releases._');
+  });
+
+  it('sanitizes GitHub mentions in release note bodies', () => {
+    const markdown = ToolVersionChangelog.formatReleaseNotesCollapsible([
+      {
+        name: 'aube',
+        previousRequested: 'latest',
+        nextRequested: 'latest',
+        previousVersion: '1.0.0',
+        nextVersion: '2.0.0',
+        releaseNotes: [
+          {
+            tag: 'v2.0.0',
+            body: 'Thanks @upstream-maintainer for the fix!\nAlso @acme/team.',
+          },
+        ],
+      },
+    ]);
+
+    expect(markdown).toContain(`@\u200Bupstream-maintainer`);
+    expect(markdown).toContain(`@\u200Bacme/team`);
+    expect(markdown).not.toContain('@upstream-maintainer');
+    expect(markdown).not.toContain('@acme/team');
   });
 });
 
