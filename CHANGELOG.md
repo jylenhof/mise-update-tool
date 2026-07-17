@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/jylenhof/mise-update-tool/compare/v1.0.1...v1.0.2) (2026-07-17)
+
+
+### Bug Fixes
+
+* sanitize GitHub mentions in PR release notes ([#13](https://github.com/jylenhof/mise-update-tool/issues/13)) ([42e47e6](https://github.com/jylenhof/mise-update-tool/commit/42e47e605b9904c6e9e976a36f9e39ad18203ce0))
+
 ## [1.0.1](https://github.com/jylenhof/mise-update-tool/compare/v1.0.0...v1.0.1) (2026-07-15)
 
 
