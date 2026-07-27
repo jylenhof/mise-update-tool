@@ -20,7 +20,7 @@ zizmor = "latest"
 
 aube = "latest"
 # Pin the Node.js version for the project
-node = "24"
+node = "26"
 
 [env]
 # Optional: if your action needs environment variables for local tests
