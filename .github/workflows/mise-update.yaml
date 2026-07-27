@@ -12,7 +12,7 @@ on:
       keep:
         description: Comma separated tools to exclude from the upgrade.
         required: false
-        default: ''
+        default: 'node'
       pull-request-strategy:
         description: Use single for one PR with all tools, or per-tool for one PR per tool.
         required: false
