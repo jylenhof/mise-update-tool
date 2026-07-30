@@ -1,0 +1,8 @@
+name: "CodeQL config"
+
+# Scan authored source, not the Vite-bundled GitHub Action entrypoint.
+# dist/ is compiled output of src/ plus vendored deps already covered by
+# Dependabot; analyzing it duplicates findings and flags protocol-mandated
+# crypto (e.g. WebSocket SHA-1 handshake) from third-party bundles.
+paths-ignore:
+  - dist/**
