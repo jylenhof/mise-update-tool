@@ -5,7 +5,24 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __esmMin = (fn, res, err) => () => {
+	if (err) throw err[0];
+	try {
+		return fn && (res = fn(fn = 0)), res;
+	} catch (e) {
+		throw err = [e], e;
+	}
+};
 var __commonJSMin = (cb, mod) => () => (mod || (cb((mod = { exports: {} }).exports, mod), cb = null), mod.exports);
+var __exportAll = (all, no_symbols) => {
+	let target = {};
+	for (var name in all) __defProp(target, name, {
+		get: all[name],
+		enumerable: true
+	});
+	if (!no_symbols) __defProp(target, Symbol.toStringTag, { value: "Module" });
+	return target;
+};
 var __copyProps = (to, from, except, desc) => {
 	if (from && typeof from === "object" || typeof from === "function") for (var keys = __getOwnPropNames(from), i = 0, n = keys.length, key; i < n; i++) {
 		key = keys[i];
@@ -20,6 +37,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 	value: mod,
 	enumerable: true
 }) : target, mod));
+var __toCommonJS = (mod) => __hasOwnProp.call(mod, "module.exports") ? mod["module.exports"] : __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 //#endregion
 let os = require("os");
 os = __toESM(os, 1);
@@ -361,7 +379,7 @@ var require_tunnel = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 }));
 //#endregion
 //#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/core/symbols.js
-var require_symbols$4 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+var require_symbols$1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	module.exports = {
 		kClose: Symbol("close"),
 		kDestroy: Symbol("destroy"),
@@ -789,8 +807,389 @@ var require_errors = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	};
 }));
 //#endregion
+//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/dispatcher/dispatcher.js
+var require_dispatcher = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+	var EventEmitter = require("node:events");
+	var Dispatcher = class extends EventEmitter {
+		dispatch() {
+			throw new Error("not implemented");
+		}
+		close() {
+			throw new Error("not implemented");
+		}
+		destroy() {
+			throw new Error("not implemented");
+		}
+		compose(...args) {
+			const interceptors = Array.isArray(args[0]) ? args[0] : args;
+			let dispatch = this.dispatch.bind(this);
+			for (const interceptor of interceptors) {
+				if (interceptor == null) continue;
+				if (typeof interceptor !== "function") throw new TypeError(`invalid interceptor, expected function received ${typeof interceptor}`);
+				dispatch = interceptor(dispatch);
+				if (dispatch == null || typeof dispatch !== "function" || dispatch.length !== 2) throw new TypeError("invalid interceptor");
+			}
+			return new ComposedDispatcher(this, dispatch);
+		}
+	};
+	var ComposedDispatcher = class extends Dispatcher {
+		#dispatcher = null;
+		#dispatch = null;
+		constructor(dispatcher, dispatch) {
+			super();
+			this.#dispatcher = dispatcher;
+			this.#dispatch = dispatch;
+		}
+		dispatch(...args) {
+			this.#dispatch(...args);
+		}
+		close(...args) {
+			return this.#dispatcher.close(...args);
+		}
+		destroy(...args) {
+			return this.#dispatcher.destroy(...args);
+		}
+	};
+	module.exports = Dispatcher;
+}));
+//#endregion
+//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/dispatcher/dispatcher-base.js
+var require_dispatcher_base = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+	var Dispatcher = require_dispatcher();
+	var { ClientDestroyedError, ClientClosedError, InvalidArgumentError } = require_errors();
+	var { kDestroy, kClose, kClosed, kDestroyed, kDispatch, kInterceptors } = require_symbols$1();
+	var kOnDestroyed = Symbol("onDestroyed");
+	var kOnClosed = Symbol("onClosed");
+	var kInterceptedDispatch = Symbol("Intercepted Dispatch");
+	var kWebSocketOptions = Symbol("webSocketOptions");
+	var DispatcherBase = class extends Dispatcher {
+		constructor(opts) {
+			super();
+			this[kDestroyed] = false;
+			this[kOnDestroyed] = null;
+			this[kClosed] = false;
+			this[kOnClosed] = [];
+			this[kWebSocketOptions] = opts?.webSocket ?? {};
+		}
+		get webSocketOptions() {
+			return {
+				maxFragments: this[kWebSocketOptions].maxFragments ?? 131072,
+				maxPayloadSize: this[kWebSocketOptions].maxPayloadSize ?? 128 * 1024 * 1024
+			};
+		}
+		get destroyed() {
+			return this[kDestroyed];
+		}
+		get closed() {
+			return this[kClosed];
+		}
+		get interceptors() {
+			return this[kInterceptors];
+		}
+		set interceptors(newInterceptors) {
+			if (newInterceptors) {
+				for (let i = newInterceptors.length - 1; i >= 0; i--) if (typeof this[kInterceptors][i] !== "function") throw new InvalidArgumentError("interceptor must be an function");
+			}
+			this[kInterceptors] = newInterceptors;
+		}
+		close(callback) {
+			if (callback === void 0) return new Promise((resolve, reject) => {
+				this.close((err, data) => {
+					return err ? reject(err) : resolve(data);
+				});
+			});
+			if (typeof callback !== "function") throw new InvalidArgumentError("invalid callback");
+			if (this[kDestroyed]) {
+				queueMicrotask(() => callback(new ClientDestroyedError(), null));
+				return;
+			}
+			if (this[kClosed]) {
+				if (this[kOnClosed]) this[kOnClosed].push(callback);
+				else queueMicrotask(() => callback(null, null));
+				return;
+			}
+			this[kClosed] = true;
+			this[kOnClosed].push(callback);
+			const onClosed = () => {
+				const callbacks = this[kOnClosed];
+				this[kOnClosed] = null;
+				for (let i = 0; i < callbacks.length; i++) callbacks[i](null, null);
+			};
+			this[kClose]().then(() => this.destroy()).then(() => {
+				queueMicrotask(onClosed);
+			});
+		}
+		destroy(err, callback) {
+			if (typeof err === "function") {
+				callback = err;
+				err = null;
+			}
+			if (callback === void 0) return new Promise((resolve, reject) => {
+				this.destroy(err, (err, data) => {
+					return err ? reject(err) : resolve(data);
+				});
+			});
+			if (typeof callback !== "function") throw new InvalidArgumentError("invalid callback");
+			if (this[kDestroyed]) {
+				if (this[kOnDestroyed]) this[kOnDestroyed].push(callback);
+				else queueMicrotask(() => callback(null, null));
+				return;
+			}
+			if (!err) err = new ClientDestroyedError();
+			this[kDestroyed] = true;
+			this[kOnDestroyed] = this[kOnDestroyed] || [];
+			this[kOnDestroyed].push(callback);
+			const onDestroyed = () => {
+				const callbacks = this[kOnDestroyed];
+				this[kOnDestroyed] = null;
+				for (let i = 0; i < callbacks.length; i++) callbacks[i](null, null);
+			};
+			this[kDestroy](err).then(() => {
+				queueMicrotask(onDestroyed);
+			});
+		}
+		[kInterceptedDispatch](opts, handler) {
+			if (!this[kInterceptors] || this[kInterceptors].length === 0) {
+				this[kInterceptedDispatch] = this[kDispatch];
+				return this[kDispatch](opts, handler);
+			}
+			let dispatch = this[kDispatch].bind(this);
+			for (let i = this[kInterceptors].length - 1; i >= 0; i--) dispatch = this[kInterceptors][i](dispatch);
+			this[kInterceptedDispatch] = dispatch;
+			return dispatch(opts, handler);
+		}
+		dispatch(opts, handler) {
+			if (!handler || typeof handler !== "object") throw new InvalidArgumentError("handler must be an object");
+			try {
+				if (!opts || typeof opts !== "object") throw new InvalidArgumentError("opts must be an object.");
+				if (this[kDestroyed] || this[kOnDestroyed]) throw new ClientDestroyedError();
+				if (this[kClosed]) throw new ClientClosedError();
+				return this[kInterceptedDispatch](opts, handler);
+			} catch (err) {
+				if (typeof handler.onError !== "function") throw new InvalidArgumentError("invalid onError method");
+				handler.onError(err);
+				return false;
+			}
+		}
+	};
+	module.exports = DispatcherBase;
+}));
+//#endregion
+//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/dispatcher/fixed-queue.js
+var require_fixed_queue = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+	var kSize = 2048;
+	var kMask = kSize - 1;
+	var FixedCircularBuffer = class {
+		constructor() {
+			this.bottom = 0;
+			this.top = 0;
+			this.list = new Array(kSize);
+			this.next = null;
+		}
+		isEmpty() {
+			return this.top === this.bottom;
+		}
+		isFull() {
+			return (this.top + 1 & kMask) === this.bottom;
+		}
+		push(data) {
+			this.list[this.top] = data;
+			this.top = this.top + 1 & kMask;
+		}
+		shift() {
+			const nextItem = this.list[this.bottom];
+			if (nextItem === void 0) return null;
+			this.list[this.bottom] = void 0;
+			this.bottom = this.bottom + 1 & kMask;
+			return nextItem;
+		}
+	};
+	module.exports = class FixedQueue {
+		constructor() {
+			this.head = this.tail = new FixedCircularBuffer();
+		}
+		isEmpty() {
+			return this.head.isEmpty();
+		}
+		push(data) {
+			if (this.head.isFull()) this.head = this.head.next = new FixedCircularBuffer();
+			this.head.push(data);
+		}
+		shift() {
+			const tail = this.tail;
+			const next = tail.shift();
+			if (tail.isEmpty() && tail.next !== null) this.tail = tail.next;
+			return next;
+		}
+	};
+}));
+//#endregion
+//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/dispatcher/pool-stats.js
+var require_pool_stats = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+	var { kFree, kConnected, kPending, kQueued, kRunning, kSize } = require_symbols$1();
+	var kPool = Symbol("pool");
+	var PoolStats = class {
+		constructor(pool) {
+			this[kPool] = pool;
+		}
+		get connected() {
+			return this[kPool][kConnected];
+		}
+		get free() {
+			return this[kPool][kFree];
+		}
+		get pending() {
+			return this[kPool][kPending];
+		}
+		get queued() {
+			return this[kPool][kQueued];
+		}
+		get running() {
+			return this[kPool][kRunning];
+		}
+		get size() {
+			return this[kPool][kSize];
+		}
+	};
+	module.exports = PoolStats;
+}));
+//#endregion
+//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/dispatcher/pool-base.js
+var require_pool_base = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+	var DispatcherBase = require_dispatcher_base();
+	var FixedQueue = require_fixed_queue();
+	var { kConnected, kSize, kRunning, kPending, kQueued, kBusy, kFree, kUrl, kClose, kDestroy, kDispatch } = require_symbols$1();
+	var PoolStats = require_pool_stats();
+	var kClients = Symbol("clients");
+	var kNeedDrain = Symbol("needDrain");
+	var kQueue = Symbol("queue");
+	var kClosedResolve = Symbol("closed resolve");
+	var kOnDrain = Symbol("onDrain");
+	var kOnConnect = Symbol("onConnect");
+	var kOnDisconnect = Symbol("onDisconnect");
+	var kOnConnectionError = Symbol("onConnectionError");
+	var kGetDispatcher = Symbol("get dispatcher");
+	var kAddClient = Symbol("add client");
+	var kRemoveClient = Symbol("remove client");
+	var kStats = Symbol("stats");
+	var PoolBase = class extends DispatcherBase {
+		constructor(opts) {
+			super(opts);
+			this[kQueue] = new FixedQueue();
+			this[kClients] = [];
+			this[kQueued] = 0;
+			const pool = this;
+			this[kOnDrain] = function onDrain(origin, targets) {
+				const queue = pool[kQueue];
+				let needDrain = false;
+				while (!needDrain) {
+					const item = queue.shift();
+					if (!item) break;
+					pool[kQueued]--;
+					needDrain = !this.dispatch(item.opts, item.handler);
+				}
+				this[kNeedDrain] = needDrain;
+				if (!this[kNeedDrain] && pool[kNeedDrain]) {
+					pool[kNeedDrain] = false;
+					pool.emit("drain", origin, [pool, ...targets]);
+				}
+				if (pool[kClosedResolve] && queue.isEmpty()) Promise.all(pool[kClients].map((c) => c.close())).then(pool[kClosedResolve]);
+			};
+			this[kOnConnect] = (origin, targets) => {
+				pool.emit("connect", origin, [pool, ...targets]);
+			};
+			this[kOnDisconnect] = (origin, targets, err) => {
+				pool.emit("disconnect", origin, [pool, ...targets], err);
+			};
+			this[kOnConnectionError] = (origin, targets, err) => {
+				pool.emit("connectionError", origin, [pool, ...targets], err);
+			};
+			this[kStats] = new PoolStats(this);
+		}
+		get [kBusy]() {
+			return this[kNeedDrain];
+		}
+		get [kConnected]() {
+			return this[kClients].filter((client) => client[kConnected]).length;
+		}
+		get [kFree]() {
+			return this[kClients].filter((client) => client[kConnected] && !client[kNeedDrain]).length;
+		}
+		get [kPending]() {
+			let ret = this[kQueued];
+			for (const { [kPending]: pending } of this[kClients]) ret += pending;
+			return ret;
+		}
+		get [kRunning]() {
+			let ret = 0;
+			for (const { [kRunning]: running } of this[kClients]) ret += running;
+			return ret;
+		}
+		get [kSize]() {
+			let ret = this[kQueued];
+			for (const { [kSize]: size } of this[kClients]) ret += size;
+			return ret;
+		}
+		get stats() {
+			return this[kStats];
+		}
+		async [kClose]() {
+			if (this[kQueue].isEmpty()) await Promise.all(this[kClients].map((c) => c.close()));
+			else await new Promise((resolve) => {
+				this[kClosedResolve] = resolve;
+			});
+		}
+		async [kDestroy](err) {
+			while (true) {
+				const item = this[kQueue].shift();
+				if (!item) break;
+				item.handler.onError(err);
+			}
+			await Promise.all(this[kClients].map((c) => c.destroy(err)));
+		}
+		[kDispatch](opts, handler) {
+			const dispatcher = this[kGetDispatcher]();
+			if (!dispatcher) {
+				this[kNeedDrain] = true;
+				this[kQueue].push({
+					opts,
+					handler
+				});
+				this[kQueued]++;
+			} else if (!dispatcher.dispatch(opts, handler)) {
+				dispatcher[kNeedDrain] = true;
+				this[kNeedDrain] = !this[kGetDispatcher]();
+			}
+			return !this[kNeedDrain];
+		}
+		[kAddClient](client) {
+			client.on("drain", this[kOnDrain]).on("connect", this[kOnConnect]).on("disconnect", this[kOnDisconnect]).on("connectionError", this[kOnConnectionError]);
+			this[kClients].push(client);
+			if (this[kNeedDrain]) queueMicrotask(() => {
+				if (this[kNeedDrain]) this[kOnDrain](client[kUrl], [this, client]);
+			});
+			return this;
+		}
+		[kRemoveClient](client) {
+			client.close(() => {
+				const idx = this[kClients].indexOf(client);
+				if (idx !== -1) this[kClients].splice(idx, 1);
+			});
+			this[kNeedDrain] = this[kClients].some((dispatcher) => !dispatcher[kNeedDrain] && dispatcher.closed !== true && dispatcher.destroyed !== true);
+		}
+	};
+	module.exports = {
+		PoolBase,
+		kClients,
+		kNeedDrain,
+		kAddClient,
+		kRemoveClient,
+		kGetDispatcher
+	};
+}));
+//#endregion
 //#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/core/constants.js
-var require_constants$5 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+var require_constants$3 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	/** @type {Record<string, string | undefined>} */
 	var headerNameLowerCasedRecord = {};
 	var wellknownHeaderNames = [
@@ -904,7 +1303,7 @@ var require_constants$5 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 //#endregion
 //#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/core/tree.js
 var require_tree = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { wellknownHeaderNames, headerNameLowerCasedRecord } = require_constants$5();
+	var { wellknownHeaderNames, headerNameLowerCasedRecord } = require_constants$3();
 	var TstNode = class TstNode {
 		/** @type {any} */
 		value = null;
@@ -1013,9 +1412,9 @@ var require_tree = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 }));
 //#endregion
 //#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/core/util.js
-var require_util$7 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var assert$27 = require("node:assert");
-	var { kDestroyed, kBodyUsed, kListeners, kBody } = require_symbols$4();
+var require_util$1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+	var assert$15 = require("node:assert");
+	var { kDestroyed, kBodyUsed, kListeners, kBody } = require_symbols$1();
 	var { IncomingMessage } = require("node:http");
 	var stream = require("node:stream");
 	var net$2 = require("node:net");
@@ -1024,7 +1423,7 @@ var require_util$7 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	var { stringify } = require("node:querystring");
 	var { EventEmitter: EE$2 } = require("node:events");
 	var { InvalidArgumentError } = require_errors();
-	var { headerNameLowerCasedRecord } = require_constants$5();
+	var { headerNameLowerCasedRecord } = require_constants$3();
 	var { tree } = require_tree();
 	var [nodeMajor, nodeMinor] = process.versions.node.split(".").map((v) => Number(v));
 	var BodyAsyncIterable = class {
@@ -1033,7 +1432,7 @@ var require_util$7 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 			this[kBodyUsed] = false;
 		}
 		async *[Symbol.asyncIterator]() {
-			assert$27(!this[kBodyUsed], "disturbed");
+			assert$15(!this[kBodyUsed], "disturbed");
 			this[kBodyUsed] = true;
 			yield* this[kBody];
 		}
@@ -1041,7 +1440,7 @@ var require_util$7 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	function wrapRequestBody(body) {
 		if (isStream(body)) {
 			if (bodyLength(body) === 0) body.on("data", function() {
-				assert$27(false);
+				assert$15(false);
 			});
 			if (typeof body.readableDidRead !== "boolean") {
 				body[kBodyUsed] = false;
@@ -1112,7 +1511,7 @@ var require_util$7 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	function getHostname(host) {
 		if (host[0] === "[") {
 			const idx = host.indexOf("]");
-			assert$27(idx !== -1);
+			assert$15(idx !== -1);
 			return host.substring(1, idx);
 		}
 		const idx = host.indexOf(":");
@@ -1121,7 +1520,7 @@ var require_util$7 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	}
 	function getServerName(host) {
 		if (!host) return null;
-		assert$27(typeof host === "string");
+		assert$15(typeof host === "string");
 		const servername = getHostname(host);
 		if (net$2.isIP(servername)) return "";
 		return servername;
@@ -1384,7 +1783,7 @@ var require_util$7 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	function errorRequest(client, request, err) {
 		try {
 			request.onError(err);
-			assert$27(request.aborted);
+			assert$15(request.aborted);
 		} catch (err) {
 			client.emit("error", err);
 		}
@@ -1566,10 +1965,10 @@ var require_diagnostics = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 //#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/core/request.js
 var require_request$1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	var { InvalidArgumentError, NotSupportedError } = require_errors();
-	var assert$26 = require("node:assert");
-	var { isValidHTTPToken, isValidHeaderValue, isStream, destroy, isBuffer, isFormDataLike, isIterable, isBlobLike, buildURL, validateHandler, getServerName, normalizedMethodRecords } = require_util$7();
+	var assert$14 = require("node:assert");
+	var { isValidHTTPToken, isValidHeaderValue, isStream, destroy, isBuffer, isFormDataLike, isIterable, isBlobLike, buildURL, validateHandler, getServerName, normalizedMethodRecords } = require_util$1();
 	var { channels } = require_diagnostics();
-	var { headerNameLowerCasedRecord } = require_constants$5();
+	var { headerNameLowerCasedRecord } = require_constants$3();
 	var invalidPathRegex = /[^\u0021-\u00ff]/;
 	var kHandler = Symbol("handler");
 	var Request = class {
@@ -1657,8 +2056,8 @@ var require_request$1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 			}
 		}
 		onConnect(abort) {
-			assert$26(!this.aborted);
-			assert$26(!this.completed);
+			assert$14(!this.aborted);
+			assert$14(!this.completed);
 			if (this.error) abort(this.error);
 			else {
 				this.abort = abort;
@@ -1669,8 +2068,8 @@ var require_request$1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 			return this[kHandler].onResponseStarted?.();
 		}
 		onHeaders(statusCode, headers, resume, statusText) {
-			assert$26(!this.aborted);
-			assert$26(!this.completed);
+			assert$14(!this.aborted);
+			assert$14(!this.completed);
 			if (channels.headers.hasSubscribers) channels.headers.publish({
 				request: this,
 				response: {
@@ -1686,8 +2085,8 @@ var require_request$1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 			}
 		}
 		onData(chunk) {
-			assert$26(!this.aborted);
-			assert$26(!this.completed);
+			assert$14(!this.aborted);
+			assert$14(!this.completed);
 			try {
 				return this[kHandler].onData(chunk);
 			} catch (err) {
@@ -1696,13 +2095,13 @@ var require_request$1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 			}
 		}
 		onUpgrade(statusCode, headers, socket) {
-			assert$26(!this.aborted);
-			assert$26(!this.completed);
+			assert$14(!this.aborted);
+			assert$14(!this.completed);
 			return this[kHandler].onUpgrade(statusCode, headers, socket);
 		}
 		onComplete(trailers) {
 			this.onFinally();
-			assert$26(!this.aborted);
+			assert$14(!this.aborted);
 			this.completed = true;
 			if (channels.trailers.hasSubscribers) channels.trailers.publish({
 				request: this,
@@ -1780,174 +2179,6 @@ var require_request$1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		else request.headers.push(key, val);
 	}
 	module.exports = Request;
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/dispatcher/dispatcher.js
-var require_dispatcher = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var EventEmitter = require("node:events");
-	var Dispatcher = class extends EventEmitter {
-		dispatch() {
-			throw new Error("not implemented");
-		}
-		close() {
-			throw new Error("not implemented");
-		}
-		destroy() {
-			throw new Error("not implemented");
-		}
-		compose(...args) {
-			const interceptors = Array.isArray(args[0]) ? args[0] : args;
-			let dispatch = this.dispatch.bind(this);
-			for (const interceptor of interceptors) {
-				if (interceptor == null) continue;
-				if (typeof interceptor !== "function") throw new TypeError(`invalid interceptor, expected function received ${typeof interceptor}`);
-				dispatch = interceptor(dispatch);
-				if (dispatch == null || typeof dispatch !== "function" || dispatch.length !== 2) throw new TypeError("invalid interceptor");
-			}
-			return new ComposedDispatcher(this, dispatch);
-		}
-	};
-	var ComposedDispatcher = class extends Dispatcher {
-		#dispatcher = null;
-		#dispatch = null;
-		constructor(dispatcher, dispatch) {
-			super();
-			this.#dispatcher = dispatcher;
-			this.#dispatch = dispatch;
-		}
-		dispatch(...args) {
-			this.#dispatch(...args);
-		}
-		close(...args) {
-			return this.#dispatcher.close(...args);
-		}
-		destroy(...args) {
-			return this.#dispatcher.destroy(...args);
-		}
-	};
-	module.exports = Dispatcher;
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/dispatcher/dispatcher-base.js
-var require_dispatcher_base = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var Dispatcher = require_dispatcher();
-	var { ClientDestroyedError, ClientClosedError, InvalidArgumentError } = require_errors();
-	var { kDestroy, kClose, kClosed, kDestroyed, kDispatch, kInterceptors } = require_symbols$4();
-	var kOnDestroyed = Symbol("onDestroyed");
-	var kOnClosed = Symbol("onClosed");
-	var kInterceptedDispatch = Symbol("Intercepted Dispatch");
-	var kWebSocketOptions = Symbol("webSocketOptions");
-	var DispatcherBase = class extends Dispatcher {
-		constructor(opts) {
-			super();
-			this[kDestroyed] = false;
-			this[kOnDestroyed] = null;
-			this[kClosed] = false;
-			this[kOnClosed] = [];
-			this[kWebSocketOptions] = opts?.webSocket ?? {};
-		}
-		get webSocketOptions() {
-			return {
-				maxFragments: this[kWebSocketOptions].maxFragments ?? 131072,
-				maxPayloadSize: this[kWebSocketOptions].maxPayloadSize ?? 128 * 1024 * 1024
-			};
-		}
-		get destroyed() {
-			return this[kDestroyed];
-		}
-		get closed() {
-			return this[kClosed];
-		}
-		get interceptors() {
-			return this[kInterceptors];
-		}
-		set interceptors(newInterceptors) {
-			if (newInterceptors) {
-				for (let i = newInterceptors.length - 1; i >= 0; i--) if (typeof this[kInterceptors][i] !== "function") throw new InvalidArgumentError("interceptor must be an function");
-			}
-			this[kInterceptors] = newInterceptors;
-		}
-		close(callback) {
-			if (callback === void 0) return new Promise((resolve, reject) => {
-				this.close((err, data) => {
-					return err ? reject(err) : resolve(data);
-				});
-			});
-			if (typeof callback !== "function") throw new InvalidArgumentError("invalid callback");
-			if (this[kDestroyed]) {
-				queueMicrotask(() => callback(new ClientDestroyedError(), null));
-				return;
-			}
-			if (this[kClosed]) {
-				if (this[kOnClosed]) this[kOnClosed].push(callback);
-				else queueMicrotask(() => callback(null, null));
-				return;
-			}
-			this[kClosed] = true;
-			this[kOnClosed].push(callback);
-			const onClosed = () => {
-				const callbacks = this[kOnClosed];
-				this[kOnClosed] = null;
-				for (let i = 0; i < callbacks.length; i++) callbacks[i](null, null);
-			};
-			this[kClose]().then(() => this.destroy()).then(() => {
-				queueMicrotask(onClosed);
-			});
-		}
-		destroy(err, callback) {
-			if (typeof err === "function") {
-				callback = err;
-				err = null;
-			}
-			if (callback === void 0) return new Promise((resolve, reject) => {
-				this.destroy(err, (err, data) => {
-					return err ? reject(err) : resolve(data);
-				});
-			});
-			if (typeof callback !== "function") throw new InvalidArgumentError("invalid callback");
-			if (this[kDestroyed]) {
-				if (this[kOnDestroyed]) this[kOnDestroyed].push(callback);
-				else queueMicrotask(() => callback(null, null));
-				return;
-			}
-			if (!err) err = new ClientDestroyedError();
-			this[kDestroyed] = true;
-			this[kOnDestroyed] = this[kOnDestroyed] || [];
-			this[kOnDestroyed].push(callback);
-			const onDestroyed = () => {
-				const callbacks = this[kOnDestroyed];
-				this[kOnDestroyed] = null;
-				for (let i = 0; i < callbacks.length; i++) callbacks[i](null, null);
-			};
-			this[kDestroy](err).then(() => {
-				queueMicrotask(onDestroyed);
-			});
-		}
-		[kInterceptedDispatch](opts, handler) {
-			if (!this[kInterceptors] || this[kInterceptors].length === 0) {
-				this[kInterceptedDispatch] = this[kDispatch];
-				return this[kDispatch](opts, handler);
-			}
-			let dispatch = this[kDispatch].bind(this);
-			for (let i = this[kInterceptors].length - 1; i >= 0; i--) dispatch = this[kInterceptors][i](dispatch);
-			this[kInterceptedDispatch] = dispatch;
-			return dispatch(opts, handler);
-		}
-		dispatch(opts, handler) {
-			if (!handler || typeof handler !== "object") throw new InvalidArgumentError("handler must be an object");
-			try {
-				if (!opts || typeof opts !== "object") throw new InvalidArgumentError("opts must be an object.");
-				if (this[kDestroyed] || this[kOnDestroyed]) throw new ClientDestroyedError();
-				if (this[kClosed]) throw new ClientClosedError();
-				return this[kInterceptedDispatch](opts, handler);
-			} catch (err) {
-				if (typeof handler.onError !== "function") throw new InvalidArgumentError("invalid onError method");
-				handler.onError(err);
-				return false;
-			}
-		}
-	};
-	module.exports = DispatcherBase;
 }));
 //#endregion
 //#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/util/timers.js
@@ -2291,8 +2522,8 @@ var require_timers = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 //#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/core/connect.js
 var require_connect = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	var net$1 = require("node:net");
-	var assert$25 = require("node:assert");
-	var util = require_util$7();
+	var assert$13 = require("node:assert");
+	var util = require_util$1();
 	var { InvalidArgumentError, ConnectTimeoutError } = require_errors();
 	var timers = require_timers();
 	function noop() {}
@@ -2350,7 +2581,7 @@ var require_connect = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 				if (!tls) tls = require("node:tls");
 				servername = servername || options.servername || util.getServerName(host) || null;
 				const sessionKey = servername || hostname;
-				assert$25(sessionKey);
+				assert$13(sessionKey);
 				const session = customSession || sessionCache.get(sessionKey) || null;
 				port = port || 443;
 				socket = tls.connect({
@@ -2368,7 +2599,7 @@ var require_connect = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 					sessionCache.set(sessionKey, session);
 				});
 			} else {
-				assert$25(!httpSocket, "httpSocket can only be sent on TLS update");
+				assert$13(!httpSocket, "httpSocket can only be sent on TLS update");
 				port = port || 80;
 				socket = net$1.connect({
 					highWaterMark: 64 * 1024,
@@ -2474,7 +2705,7 @@ var require_utils = /* @__PURE__ */ __commonJSMin(((exports) => {
 }));
 //#endregion
 //#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/llhttp/constants.js
-var require_constants$4 = /* @__PURE__ */ __commonJSMin(((exports) => {
+var require_constants$2 = /* @__PURE__ */ __commonJSMin(((exports) => {
 	Object.defineProperty(exports, "__esModule", { value: true });
 	exports.SPECIAL_HEADERS = exports.HEADER_STATE = exports.MINOR = exports.MAJOR = exports.CONNECTION_TOKEN_CHARS = exports.HEADER_CHARS = exports.TOKEN = exports.STRICT_TOKEN = exports.HEX = exports.URL_CHAR = exports.STRICT_URL_CHAR = exports.USERINFO_CHARS = exports.MARK = exports.ALPHANUM = exports.NUM = exports.HEX_MAP = exports.NUM_MAP = exports.ALPHA = exports.FINISH = exports.H_METHOD_MAP = exports.METHOD_MAP = exports.METHODS_RTSP = exports.METHODS_ICE = exports.METHODS_HTTP = exports.METHODS = exports.LENIENT_FLAGS = exports.FLAGS = exports.TYPE = exports.ERROR = void 0;
 	var utils_1 = require_utils();
@@ -2819,7 +3050,7 @@ var require_llhttp_simd_wasm = /* @__PURE__ */ __commonJSMin(((exports, module) 
 }));
 //#endregion
 //#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/fetch/constants.js
-var require_constants$3 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+var require_constants$1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	var corsSafeListedMethods = [
 		"GET",
 		"HEAD",
@@ -3069,7 +3300,7 @@ var require_global$1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 //#endregion
 //#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/fetch/data-url.js
 var require_data_url = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var assert$24 = require("node:assert");
+	var assert$12 = require("node:assert");
 	var encoder = new TextEncoder();
 	/**
 	* @see https://mimesniff.spec.whatwg.org/#http-token-code-point
@@ -3083,7 +3314,7 @@ var require_data_url = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	var HTTP_QUOTED_STRING_TOKENS = /^[\u0009\u0020-\u007E\u0080-\u00FF]+$/;
 	/** @param {URL} dataURL */
 	function dataURLProcessor(dataURL) {
-		assert$24(dataURL.protocol === "data:");
+		assert$12(dataURL.protocol === "data:");
 		let input = URLSerializer(dataURL, true);
 		input = input.slice(5);
 		const position = { position: 0 };
@@ -3248,7 +3479,7 @@ var require_data_url = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	function collectAnHTTPQuotedString(input, position, extractValue) {
 		const positionStart = position.position;
 		let value = "";
-		assert$24(input[position.position] === "\"");
+		assert$12(input[position.position] === "\"");
 		position.position++;
 		while (true) {
 			value += collectASequenceOfCodePoints((char) => char !== "\"" && char !== "\\", input, position);
@@ -3263,7 +3494,7 @@ var require_data_url = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 				value += input[position.position];
 				position.position++;
 			} else {
-				assert$24(quoteOrBackslash === "\"");
+				assert$12(quoteOrBackslash === "\"");
 				break;
 			}
 		}
@@ -3274,7 +3505,7 @@ var require_data_url = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	* @see https://mimesniff.spec.whatwg.org/#serialize-a-mime-type
 	*/
 	function serializeAMimeType(mimeType) {
-		assert$24(mimeType !== "failure");
+		assert$12(mimeType !== "failure");
 		const { parameters, essence } = mimeType;
 		let serialization = essence;
 		for (let [name, value] of parameters.entries()) {
@@ -3404,9 +3635,9 @@ var require_data_url = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 //#endregion
 //#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/fetch/webidl.js
 var require_webidl = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { types: types$3, inspect } = require("node:util");
+	var { types: types$1, inspect } = require("node:util");
 	var { markAsUncloneable } = require("node:worker_threads");
-	var { toUSVString } = require_util$7();
+	var { toUSVString } = require_util$1();
 	/** @type {import('../../../types/webidl').Webidl} */
 	var webidl = {};
 	webidl.converters = {};
@@ -3551,7 +3782,7 @@ var require_webidl = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 				message: `${argument} ("${webidl.util.Type(O)}") is not an Object.`
 			});
 			const result = {};
-			if (!types$3.isProxy(O)) {
+			if (!types$1.isProxy(O)) {
 				const keys = [...Object.getOwnPropertyNames(O), ...Object.getOwnPropertySymbols(O)];
 				for (const key of keys) {
 					const typedKey = keyConverter(key, prefix, argument);
@@ -3647,12 +3878,12 @@ var require_webidl = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		return webidl.util.ConvertToInt(V, 16, "unsigned", opts, prefix, argument);
 	};
 	webidl.converters.ArrayBuffer = function(V, prefix, argument, opts) {
-		if (webidl.util.Type(V) !== "Object" || !types$3.isAnyArrayBuffer(V)) throw webidl.errors.conversionFailed({
+		if (webidl.util.Type(V) !== "Object" || !types$1.isAnyArrayBuffer(V)) throw webidl.errors.conversionFailed({
 			prefix,
 			argument: `${argument} ("${webidl.util.Stringify(V)}")`,
 			types: ["ArrayBuffer"]
 		});
-		if (opts?.allowShared === false && types$3.isSharedArrayBuffer(V)) throw webidl.errors.exception({
+		if (opts?.allowShared === false && types$1.isSharedArrayBuffer(V)) throw webidl.errors.exception({
 			header: "ArrayBuffer",
 			message: "SharedArrayBuffer is not allowed."
 		});
@@ -3663,12 +3894,12 @@ var require_webidl = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		return V;
 	};
 	webidl.converters.TypedArray = function(V, T, prefix, name, opts) {
-		if (webidl.util.Type(V) !== "Object" || !types$3.isTypedArray(V) || V.constructor.name !== T.name) throw webidl.errors.conversionFailed({
+		if (webidl.util.Type(V) !== "Object" || !types$1.isTypedArray(V) || V.constructor.name !== T.name) throw webidl.errors.conversionFailed({
 			prefix,
 			argument: `${name} ("${webidl.util.Stringify(V)}")`,
 			types: [T.name]
 		});
-		if (opts?.allowShared === false && types$3.isSharedArrayBuffer(V.buffer)) throw webidl.errors.exception({
+		if (opts?.allowShared === false && types$1.isSharedArrayBuffer(V.buffer)) throw webidl.errors.exception({
 			header: "ArrayBuffer",
 			message: "SharedArrayBuffer is not allowed."
 		});
@@ -3679,11 +3910,11 @@ var require_webidl = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		return V;
 	};
 	webidl.converters.DataView = function(V, prefix, name, opts) {
-		if (webidl.util.Type(V) !== "Object" || !types$3.isDataView(V)) throw webidl.errors.exception({
+		if (webidl.util.Type(V) !== "Object" || !types$1.isDataView(V)) throw webidl.errors.exception({
 			header: prefix,
 			message: `${name} is not a DataView.`
 		});
-		if (opts?.allowShared === false && types$3.isSharedArrayBuffer(V.buffer)) throw webidl.errors.exception({
+		if (opts?.allowShared === false && types$1.isSharedArrayBuffer(V.buffer)) throw webidl.errors.exception({
 			header: "ArrayBuffer",
 			message: "SharedArrayBuffer is not allowed."
 		});
@@ -3694,15 +3925,15 @@ var require_webidl = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		return V;
 	};
 	webidl.converters.BufferSource = function(V, prefix, name, opts) {
-		if (types$3.isAnyArrayBuffer(V)) return webidl.converters.ArrayBuffer(V, prefix, name, {
+		if (types$1.isAnyArrayBuffer(V)) return webidl.converters.ArrayBuffer(V, prefix, name, {
 			...opts,
 			allowShared: false
 		});
-		if (types$3.isTypedArray(V)) return webidl.converters.TypedArray(V, V.constructor, prefix, name, {
+		if (types$1.isTypedArray(V)) return webidl.converters.TypedArray(V, V.constructor, prefix, name, {
 			...opts,
 			allowShared: false
 		});
-		if (types$3.isDataView(V)) return webidl.converters.DataView(V, prefix, name, {
+		if (types$1.isDataView(V)) return webidl.converters.DataView(V, prefix, name, {
 			...opts,
 			allowShared: false
 		});
@@ -3719,15 +3950,15 @@ var require_webidl = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 }));
 //#endregion
 //#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/fetch/util.js
-var require_util$6 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { Transform: Transform$2 } = require("node:stream");
+var require_util = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+	var { Transform } = require("node:stream");
 	var zlib$1 = require("node:zlib");
-	var { redirectStatusSet, referrerPolicySet: referrerPolicyTokens, badPortsSet } = require_constants$3();
+	var { redirectStatusSet, referrerPolicySet: referrerPolicyTokens, badPortsSet } = require_constants$1();
 	var { getGlobalOrigin } = require_global$1();
 	var { collectASequenceOfCodePoints, collectAnHTTPQuotedString, removeChars, parseMIMEType } = require_data_url();
 	var { performance: performance$1 } = require("node:perf_hooks");
-	var { isBlobLike, ReadableStreamFrom, isValidHTTPToken, normalizedMethodRecordsBase } = require_util$7();
-	var assert$23 = require("node:assert");
+	var { isBlobLike, ReadableStreamFrom, isValidHTTPToken, normalizedMethodRecordsBase } = require_util$1();
+	var assert$11 = require("node:assert");
 	var { isUint8Array } = require("node:util/types");
 	var { webidl } = require_webidl();
 	var supportedHashes = [];
@@ -3905,7 +4136,7 @@ var require_util$6 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	}
 	function determineRequestsReferrer(request) {
 		const policy = request.referrerPolicy;
-		assert$23(policy);
+		assert$11(policy);
 		let referrerSource = null;
 		if (request.referrer === "client") {
 			const globalOrigin = getGlobalOrigin();
@@ -3943,7 +4174,7 @@ var require_util$6 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	* @param {boolean|undefined} originOnly
 	*/
 	function stripURLForReferrer(url, originOnly) {
-		assert$23(url instanceof URL);
+		assert$11(url instanceof URL);
 		url = new URL(url);
 		if (url.protocol === "file:" || url.protocol === "about:" || url.protocol === "blank:") return "no-referrer";
 		url.username = "";
@@ -4088,7 +4319,7 @@ var require_util$6 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	function serializeJavascriptValueToJSONString(value) {
 		const result = JSON.stringify(value);
 		if (result === void 0) throw new TypeError("Value is not JSON serializable");
-		assert$23(typeof result === "string");
+		assert$11(typeof result === "string");
 		return result;
 	}
 	var esIteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]()));
@@ -4268,7 +4499,7 @@ var require_util$6 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	* @param {string} input
 	*/
 	function isomorphicEncode(input) {
-		assert$23(!invalidIsomorphicEncodeValueRegex.test(input));
+		assert$11(!invalidIsomorphicEncodeValueRegex.test(input));
 		return input;
 	}
 	/**
@@ -4292,7 +4523,7 @@ var require_util$6 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	* @param {URL} url
 	*/
 	function urlIsLocal(url) {
-		assert$23("protocol" in url);
+		assert$11("protocol" in url);
 		const protocol = url.protocol;
 		return protocol === "about:" || protocol === "blob:" || protocol === "data:";
 	}
@@ -4308,7 +4539,7 @@ var require_util$6 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	* @param {URL} url
 	*/
 	function urlIsHttpHttpsScheme(url) {
-		assert$23("protocol" in url);
+		assert$11("protocol" in url);
 		const protocol = url.protocol;
 		return protocol === "http:" || protocol === "https:";
 	}
@@ -4362,7 +4593,7 @@ var require_util$6 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		contentRange += isomorphicEncode(`${fullLength}`);
 		return contentRange;
 	}
-	var InflateStream = class extends Transform$2 {
+	var InflateStream = class extends Transform {
 		#zlibOptions;
 		/** @param {zlib.ZlibOptions} [zlibOptions] */
 		constructor(zlibOptions) {
@@ -4435,7 +4666,7 @@ var require_util$6 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 				temporaryValue += collectAnHTTPQuotedString(input, position);
 				if (position.position < input.length) continue;
 			} else {
-				assert$23(input.charCodeAt(position.position) === 44);
+				assert$11(input.charCodeAt(position.position) === 44);
 				position.position++;
 			}
 			temporaryValue = removeChars(temporaryValue, true, true, (char) => char === 9 || char === 32);
@@ -4532,7 +4763,7 @@ var require_util$6 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 }));
 //#endregion
 //#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/fetch/symbols.js
-var require_symbols$3 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+var require_symbols = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	module.exports = {
 		kUrl: Symbol("url"),
 		kHeaders: Symbol("headers"),
@@ -4545,7 +4776,7 @@ var require_symbols$3 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 //#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/fetch/file.js
 var require_file = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	var { Blob: Blob$2, File } = require("node:buffer");
-	var { kState } = require_symbols$3();
+	var { kState } = require_symbols();
 	var { webidl } = require_webidl();
 	var FileLike = class FileLike {
 		constructor(blobLike, fileName, options = {}) {
@@ -4607,9 +4838,9 @@ var require_file = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 //#endregion
 //#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/fetch/formdata.js
 var require_formdata = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { isBlobLike, iteratorMixin } = require_util$6();
-	var { kState } = require_symbols$3();
-	var { kEnumerableProperty } = require_util$7();
+	var { isBlobLike, iteratorMixin } = require_util();
+	var { kState } = require_symbols();
+	var { kEnumerableProperty } = require_util$1();
 	var { FileLike, isFileLike } = require_file();
 	var { webidl } = require_webidl();
 	var { File: NativeFile } = require("node:buffer");
@@ -4742,12 +4973,12 @@ var require_formdata = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 //#endregion
 //#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/fetch/formdata-parser.js
 var require_formdata_parser = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { isUSVString, bufferToLowerCasedHeaderName } = require_util$7();
-	var { utf8DecodeBytes } = require_util$6();
+	var { isUSVString, bufferToLowerCasedHeaderName } = require_util$1();
+	var { utf8DecodeBytes } = require_util();
 	var { HTTP_TOKEN_CODEPOINTS, isomorphicDecode } = require_data_url();
 	var { isFileLike } = require_file();
 	var { makeEntry } = require_formdata();
-	var assert$22 = require("node:assert");
+	var assert$10 = require("node:assert");
 	var { File: NodeFile } = require("node:buffer");
 	var File = globalThis.File ?? NodeFile;
 	var formDataNameBuffer = Buffer.from("form-data; name=\"");
@@ -4780,7 +5011,7 @@ var require_formdata_parser = /* @__PURE__ */ __commonJSMin(((exports, module) =
 	* @param {ReturnType<import('./data-url')['parseMIMEType']>} mimeType
 	*/
 	function multipartFormDataParser(input, mimeType) {
-		assert$22(mimeType !== "failure" && mimeType.essence === "multipart/form-data");
+		assert$10(mimeType !== "failure" && mimeType.essence === "multipart/form-data");
 		const boundaryString = mimeType.parameters.get("boundary");
 		if (boundaryString === void 0) return "failure";
 		const boundary = Buffer.from(`--${boundaryString}`, "utf8");
@@ -4816,8 +5047,8 @@ var require_formdata_parser = /* @__PURE__ */ __commonJSMin(((exports, module) =
 				if (!isAsciiString(contentType)) contentType = "";
 				value = new File([body], filename, { type: contentType });
 			} else value = utf8DecodeBytes(Buffer.from(body));
-			assert$22(isUSVString(name));
-			assert$22(typeof value === "string" && isUSVString(value) || isFileLike(value));
+			assert$10(isUSVString(name));
+			assert$10(typeof value === "string" && isUSVString(value) || isFileLike(value));
 			entryList.push(makeEntry(name, value, filename));
 		}
 	}
@@ -4890,7 +5121,7 @@ var require_formdata_parser = /* @__PURE__ */ __commonJSMin(((exports, module) =
 	* @param {{ position: number }} position
 	*/
 	function parseMultipartFormDataName(input, position) {
-		assert$22(input[position.position - 1] === 34);
+		assert$10(input[position.position - 1] === 34);
 		/** @type {string | Buffer} */
 		let name = collectASequenceOfBytes((char) => char !== 10 && char !== 13 && char !== 34, input, position);
 		if (input[position.position] !== 34) return null;
@@ -4941,13 +5172,13 @@ var require_formdata_parser = /* @__PURE__ */ __commonJSMin(((exports, module) =
 //#endregion
 //#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/fetch/body.js
 var require_body = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var util = require_util$7();
-	var { ReadableStreamFrom, isBlobLike, isReadableStreamLike, readableStreamClose, createDeferredPromise, fullyReadBody, extractMimeType, utf8DecodeBytes } = require_util$6();
+	var util = require_util$1();
+	var { ReadableStreamFrom, isBlobLike, isReadableStreamLike, readableStreamClose, createDeferredPromise, fullyReadBody, extractMimeType, utf8DecodeBytes } = require_util();
 	var { FormData } = require_formdata();
-	var { kState } = require_symbols$3();
+	var { kState } = require_symbols();
 	var { webidl } = require_webidl();
 	var { Blob: Blob$1 } = require("node:buffer");
-	var assert$21 = require("node:assert");
+	var assert$9 = require("node:assert");
 	var { isErrored, isDisturbed } = require("node:stream");
 	var { isArrayBuffer } = require("node:util/types");
 	var { serializeAMimeType } = require_data_url();
@@ -4980,7 +5211,7 @@ var require_body = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 			start() {},
 			type: "bytes"
 		});
-		assert$21(isReadableStreamLike(stream));
+		assert$9(isReadableStreamLike(stream));
 		let action = null;
 		let source = null;
 		let length = null;
@@ -5067,9 +5298,9 @@ Content-Type: ${value.type || "application/octet-stream"}\r\n\r\n`);
 	function safelyExtractBody(object, keepalive = false) {
 		if (object instanceof ReadableStream) {
 			// istanbul ignore next
-			assert$21(!util.isDisturbed(object), "The body has already been consumed.");
+			assert$9(!util.isDisturbed(object), "The body has already been consumed.");
 			// istanbul ignore next
-			assert$21(!object.locked, "The stream is locked.");
+			assert$9(!object.locked, "The stream is locked.");
 		}
 		return extractBody(object, keepalive);
 	}
@@ -5198,13 +5429,13 @@ Content-Type: ${value.type || "application/octet-stream"}\r\n\r\n`);
 //#endregion
 //#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/dispatcher/client-h1.js
 var require_client_h1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var assert$20 = require("node:assert");
-	var util = require_util$7();
+	var assert$8 = require("node:assert");
+	var util = require_util$1();
 	var { channels } = require_diagnostics();
 	var timers = require_timers();
 	var { RequestContentLengthMismatchError, ResponseContentLengthMismatchError, RequestAbortedError, HeadersTimeoutError, HeadersOverflowError, SocketError, InformationalError, BodyTimeoutError, HTTPParserError, ResponseExceededMaxSizeError } = require_errors();
-	var { kUrl, kReset, kClient, kParser, kBlocking, kRunning, kPending, kSize, kWriting, kQueue, kNoRef, kKeepAliveDefaultTimeout, kHostHeader, kPendingIdx, kRunningIdx, kError, kPipelining, kSocket, kKeepAliveTimeoutValue, kMaxHeadersSize, kKeepAliveMaxTimeout, kKeepAliveTimeoutThreshold, kHeadersTimeout, kBodyTimeout, kStrictContentLength, kMaxRequests, kCounter, kMaxResponseSize, kOnError, kResume, kHTTPContext } = require_symbols$4();
-	var constants = require_constants$4();
+	var { kUrl, kReset, kClient, kParser, kBlocking, kRunning, kPending, kSize, kWriting, kQueue, kNoRef, kKeepAliveDefaultTimeout, kHostHeader, kPendingIdx, kRunningIdx, kError, kPipelining, kSocket, kKeepAliveTimeoutValue, kMaxHeadersSize, kKeepAliveMaxTimeout, kKeepAliveTimeoutThreshold, kHeadersTimeout, kBodyTimeout, kStrictContentLength, kMaxRequests, kCounter, kMaxResponseSize, kOnError, kResume, kHTTPContext } = require_symbols$1();
+	var constants = require_constants$2();
 	var EMPTY_BUF = Buffer.alloc(0);
 	var FastBuffer = Buffer[Symbol.species];
 	var addListener = util.addListener;
@@ -5228,35 +5459,35 @@ var require_client_h1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 				return 0;
 			},
 			wasm_on_status: (p, at, len) => {
-				assert$20(currentParser.ptr === p);
+				assert$8(currentParser.ptr === p);
 				const start = at - currentBufferPtr + currentBufferRef.byteOffset;
 				return currentParser.onStatus(new FastBuffer(currentBufferRef.buffer, start, len)) || 0;
 			},
 			wasm_on_message_begin: (p) => {
-				assert$20(currentParser.ptr === p);
+				assert$8(currentParser.ptr === p);
 				return currentParser.onMessageBegin() || 0;
 			},
 			wasm_on_header_field: (p, at, len) => {
-				assert$20(currentParser.ptr === p);
+				assert$8(currentParser.ptr === p);
 				const start = at - currentBufferPtr + currentBufferRef.byteOffset;
 				return currentParser.onHeaderField(new FastBuffer(currentBufferRef.buffer, start, len)) || 0;
 			},
 			wasm_on_header_value: (p, at, len) => {
-				assert$20(currentParser.ptr === p);
+				assert$8(currentParser.ptr === p);
 				const start = at - currentBufferPtr + currentBufferRef.byteOffset;
 				return currentParser.onHeaderValue(new FastBuffer(currentBufferRef.buffer, start, len)) || 0;
 			},
 			wasm_on_headers_complete: (p, statusCode, upgrade, shouldKeepAlive) => {
-				assert$20(currentParser.ptr === p);
+				assert$8(currentParser.ptr === p);
 				return currentParser.onHeadersComplete(statusCode, Boolean(upgrade), Boolean(shouldKeepAlive)) || 0;
 			},
 			wasm_on_body: (p, at, len) => {
-				assert$20(currentParser.ptr === p);
+				assert$8(currentParser.ptr === p);
 				const start = at - currentBufferPtr + currentBufferRef.byteOffset;
 				return currentParser.onBody(new FastBuffer(currentBufferRef.buffer, start, len)) || 0;
 			},
 			wasm_on_message_complete: (p) => {
-				assert$20(currentParser.ptr === p);
+				assert$8(currentParser.ptr === p);
 				return currentParser.onMessageComplete() || 0;
 			}
 		} });
@@ -5274,7 +5505,7 @@ var require_client_h1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	var TIMEOUT_KEEP_ALIVE = 8;
 	var Parser = class {
 		constructor(client, socket, { exports: exports$1 }) {
-			assert$20(Number.isFinite(client[kMaxHeadersSize]) && client[kMaxHeadersSize] > 0);
+			assert$8(Number.isFinite(client[kMaxHeadersSize]) && client[kMaxHeadersSize] > 0);
 			this.llhttp = exports$1;
 			this.ptr = this.llhttp.llhttp_alloc(constants.TYPE.RESPONSE);
 			this.client = client;
@@ -5317,10 +5548,10 @@ var require_client_h1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		}
 		resume() {
 			if (this.socket.destroyed || !this.paused) return;
-			assert$20(this.ptr != null);
-			assert$20(currentParser == null);
+			assert$8(this.ptr != null);
+			assert$8(currentParser == null);
 			this.llhttp.llhttp_resume(this.ptr);
-			assert$20(this.timeoutType === TIMEOUT_BODY);
+			assert$8(this.timeoutType === TIMEOUT_BODY);
 			if (this.timeout) {
 				// istanbul ignore else: only for jest
 				if (this.timeout.refresh) this.timeout.refresh();
@@ -5337,9 +5568,9 @@ var require_client_h1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 			}
 		}
 		execute(data) {
-			assert$20(this.ptr != null);
-			assert$20(currentParser == null);
-			assert$20(!this.paused);
+			assert$8(this.ptr != null);
+			assert$8(currentParser == null);
+			assert$8(!this.paused);
 			const { socket, llhttp } = this;
 			if (data.length > currentBufferSize) {
 				if (currentBufferPtr) llhttp.free(currentBufferPtr);
@@ -5374,9 +5605,9 @@ var require_client_h1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 			}
 		}
 		finish() {
-			assert$20(currentParser === null);
-			assert$20(this.ptr != null);
-			assert$20(!this.paused);
+			assert$8(currentParser === null);
+			assert$8(this.ptr != null);
+			assert$8(!this.paused);
 			const { llhttp } = this;
 			let ret;
 			try {
@@ -5404,8 +5635,8 @@ var require_client_h1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 			return new HTTPParserError(message, constants.ERROR[ret], data);
 		}
 		destroy() {
-			assert$20(this.ptr != null);
-			assert$20(currentParser == null);
+			assert$8(this.ptr != null);
+			assert$8(currentParser == null);
 			this.llhttp.llhttp_free(this.ptr);
 			this.ptr = null;
 			this.timeout && timers.clearTimeout(this.timeout);
@@ -5455,14 +5686,14 @@ var require_client_h1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		}
 		onUpgrade(head) {
 			const { upgrade, client, socket, headers, statusCode } = this;
-			assert$20(upgrade);
-			assert$20(client[kSocket] === socket);
-			assert$20(!socket.destroyed);
-			assert$20(!this.paused);
-			assert$20((headers.length & 1) === 0);
+			assert$8(upgrade);
+			assert$8(client[kSocket] === socket);
+			assert$8(!socket.destroyed);
+			assert$8(!this.paused);
+			assert$8((headers.length & 1) === 0);
 			const request = client[kQueue][client[kRunningIdx]];
-			assert$20(request);
-			assert$20(request.upgrade || request.method === "CONNECT");
+			assert$8(request);
+			assert$8(request.upgrade || request.method === "CONNECT");
 			this.statusCode = null;
 			this.statusText = "";
 			this.shouldKeepAlive = null;
@@ -5496,8 +5727,8 @@ var require_client_h1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 			const request = client[kQueue][client[kRunningIdx]];
 			/* istanbul ignore next: difficult to make a test case for */
 			if (!request) return -1;
-			assert$20(!this.upgrade);
-			assert$20(this.statusCode < 200);
+			assert$8(!this.upgrade);
+			assert$8(this.statusCode < 200);
 			if (statusCode === 100) {
 				util.destroy(socket, new SocketError("bad response", util.getSocketInfo(socket)));
 				return -1;
@@ -5506,7 +5737,7 @@ var require_client_h1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 				util.destroy(socket, new SocketError("bad upgrade", util.getSocketInfo(socket)));
 				return -1;
 			}
-			assert$20(this.timeoutType === TIMEOUT_HEADERS);
+			assert$8(this.timeoutType === TIMEOUT_HEADERS);
 			this.statusCode = statusCode;
 			this.shouldKeepAlive = shouldKeepAlive || request.method === "HEAD" && !socket[kReset] && this.connection.toLowerCase() === "keep-alive";
 			if (this.statusCode >= 200) {
@@ -5517,16 +5748,16 @@ var require_client_h1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 				if (this.timeout.refresh) this.timeout.refresh();
 			}
 			if (request.method === "CONNECT") {
-				assert$20(client[kRunning] === 1);
+				assert$8(client[kRunning] === 1);
 				this.upgrade = true;
 				return 2;
 			}
 			if (upgrade) {
-				assert$20(client[kRunning] === 1);
+				assert$8(client[kRunning] === 1);
 				this.upgrade = true;
 				return 2;
 			}
-			assert$20((this.headers.length & 1) === 0);
+			assert$8((this.headers.length & 1) === 0);
 			this.headers = [];
 			this.headersSize = 0;
 			if (this.shouldKeepAlive && client[kPipelining]) {
@@ -5551,13 +5782,13 @@ var require_client_h1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 			const { client, socket, statusCode, maxResponseSize } = this;
 			if (socket.destroyed) return -1;
 			const request = client[kQueue][client[kRunningIdx]];
-			assert$20(request);
-			assert$20(this.timeoutType === TIMEOUT_BODY);
+			assert$8(request);
+			assert$8(this.timeoutType === TIMEOUT_BODY);
 			if (this.timeout) {
 				// istanbul ignore else: only for jest
 				if (this.timeout.refresh) this.timeout.refresh();
 			}
-			assert$20(statusCode >= 200);
+			assert$8(statusCode >= 200);
 			if (maxResponseSize > -1 && this.bytesRead + buf.length > maxResponseSize) {
 				util.destroy(socket, new ResponseExceededMaxSizeError());
 				return -1;
@@ -5569,10 +5800,10 @@ var require_client_h1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 			const { client, socket, statusCode, upgrade, headers, contentLength, bytesRead, shouldKeepAlive } = this;
 			if (socket.destroyed && (!statusCode || shouldKeepAlive)) return -1;
 			if (upgrade) return;
-			assert$20(statusCode >= 100);
-			assert$20((this.headers.length & 1) === 0);
+			assert$8(statusCode >= 100);
+			assert$8((this.headers.length & 1) === 0);
 			const request = client[kQueue][client[kRunningIdx]];
-			assert$20(request);
+			assert$8(request);
 			this.statusCode = null;
 			this.statusText = "";
 			this.bytesRead = 0;
@@ -5591,7 +5822,7 @@ var require_client_h1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 			client[kQueue][client[kRunningIdx]++] = null;
 			socket[kSocketUsed] = true;
 			if (socket[kWriting]) {
-				assert$20(client[kRunning] === 0);
+				assert$8(client[kRunning] === 0);
 				util.destroy(socket, new InformationalError("reset"));
 				return constants.ERROR.PAUSED;
 			} else if (!shouldKeepAlive) {
@@ -5609,13 +5840,13 @@ var require_client_h1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		/* istanbul ignore else */
 		if (timeoutType === TIMEOUT_HEADERS) {
 			if (!socket[kWriting] || socket.writableNeedDrain || client[kRunning] > 1) {
-				assert$20(!paused, "cannot be paused while waiting for headers");
+				assert$8(!paused, "cannot be paused while waiting for headers");
 				util.destroy(socket, new HeadersTimeoutError());
 			}
 		} else if (timeoutType === TIMEOUT_BODY) {
 			if (!paused) util.destroy(socket, new BodyTimeoutError());
 		} else if (timeoutType === TIMEOUT_KEEP_ALIVE) {
-			assert$20(client[kRunning] === 0 && client[kKeepAliveTimeoutValue]);
+			assert$8(client[kRunning] === 0 && client[kKeepAliveTimeoutValue]);
 			util.destroy(socket, new InformationalError("socket idle timeout"));
 		}
 	}
@@ -5634,7 +5865,7 @@ var require_client_h1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		socket[kSocketUsed] = false;
 		socket[kParser] = new Parser(client, socket, llhttpInstance);
 		addListener(socket, "error", function(err) {
-			assert$20(err.code !== "ERR_TLS_CERT_ALTNAME_INVALID");
+			assert$8(err.code !== "ERR_TLS_CERT_ALTNAME_INVALID");
 			const parser = this[kParser];
 			if (err.code === "ECONNRESET" && parser.statusCode && !parser.shouldKeepAlive) {
 				const parserErr = parser.finish();
@@ -5673,7 +5904,7 @@ var require_client_h1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 			client[kSocket] = null;
 			client[kHTTPContext] = null;
 			if (client.destroyed) {
-				assert$20(client[kPending] === 0);
+				assert$8(client[kPending] === 0);
 				const requests = client[kQueue].splice(client[kRunningIdx]);
 				for (let i = 0; i < requests.length; i++) {
 					const request = requests[i];
@@ -5685,7 +5916,7 @@ var require_client_h1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 				util.errorRequest(client, request, err);
 			}
 			client[kPendingIdx] = client[kRunningIdx];
-			assert$20(client[kRunning] === 0);
+			assert$8(client[kRunning] === 0);
 			client.emit("disconnect", client[kUrl], [client], err);
 			client[kResume]();
 		});
@@ -5848,11 +6079,11 @@ var require_client_h1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		else writeBlob(abort, body, client, request, socket, contentLength, header, expectsPayload);
 		else if (util.isStream(body)) writeStream(abort, body, client, request, socket, contentLength, header, expectsPayload);
 		else if (util.isIterable(body)) writeIterable(abort, body, client, request, socket, contentLength, header, expectsPayload);
-		else assert$20(false);
+		else assert$8(false);
 		return true;
 	}
 	function writeStream(abort, body, client, request, socket, contentLength, header, expectsPayload) {
-		assert$20(contentLength !== 0 || client[kRunning] === 0, "stream body cannot be pipelined");
+		assert$8(contentLength !== 0 || client[kRunning] === 0, "stream body cannot be pipelined");
 		let finished = false;
 		const writer = new AsyncWriter({
 			abort,
@@ -5887,7 +6118,7 @@ var require_client_h1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		const onFinished = function(err) {
 			if (finished) return;
 			finished = true;
-			assert$20(socket.destroyed || socket[kWriting] && client[kRunning] <= 1);
+			assert$8(socket.destroyed || socket[kWriting] && client[kRunning] <= 1);
 			socket.off("drain", onDrain).off("error", onFinished);
 			body.removeListener("data", onData).removeListener("end", onFinished).removeListener("close", onClose);
 			if (!err) try {
@@ -5910,11 +6141,11 @@ var require_client_h1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		try {
 			if (!body) if (contentLength === 0) socket.write(`${header}content-length: 0\r\n\r\n`, "latin1");
 			else {
-				assert$20(contentLength === null, "no body must not have content length");
+				assert$8(contentLength === null, "no body must not have content length");
 				socket.write(`${header}\r\n`, "latin1");
 			}
 			else if (util.isBuffer(body)) {
-				assert$20(contentLength === body.byteLength, "buffer body must have content length");
+				assert$8(contentLength === body.byteLength, "buffer body must have content length");
 				socket.cork();
 				socket.write(`${header}content-length: ${contentLength}\r\n\r\n`, "latin1");
 				socket.write(body);
@@ -5929,7 +6160,7 @@ var require_client_h1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		}
 	}
 	async function writeBlob(abort, body, client, request, socket, contentLength, header, expectsPayload) {
-		assert$20(contentLength === body.size, "blob body must have content length");
+		assert$8(contentLength === body.size, "blob body must have content length");
 		try {
 			if (contentLength != null && contentLength !== body.size) throw new RequestContentLengthMismatchError();
 			const buffer = Buffer.from(await body.arrayBuffer());
@@ -5946,7 +6177,7 @@ var require_client_h1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		}
 	}
 	async function writeIterable(abort, body, client, request, socket, contentLength, header, expectsPayload) {
-		assert$20(contentLength !== 0 || client[kRunning] === 0, "iterator body cannot be pipelined");
+		assert$8(contentLength !== 0 || client[kRunning] === 0, "iterator body cannot be pipelined");
 		let callback = null;
 		function onDrain() {
 			if (callback) {
@@ -5956,7 +6187,7 @@ var require_client_h1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 			}
 		}
 		const waitForDrain = () => new Promise((resolve, reject) => {
-			assert$20(callback === null);
+			assert$8(callback === null);
 			if (socket[kError]) reject(socket[kError]);
 			else callback = resolve;
 		});
@@ -6044,7 +6275,7 @@ var require_client_h1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 			const { socket, client, abort } = this;
 			socket[kWriting] = false;
 			if (err) {
-				assert$20(client[kRunning] <= 1, "pipeline should only contain this request");
+				assert$8(client[kRunning] <= 1, "pipeline should only contain this request");
 				abort(err);
 			}
 		}
@@ -6054,11 +6285,11 @@ var require_client_h1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 //#endregion
 //#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/dispatcher/client-h2.js
 var require_client_h2 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var assert$19 = require("node:assert");
-	var { pipeline: pipeline$2 } = require("node:stream");
-	var util = require_util$7();
+	var assert$7 = require("node:assert");
+	var { pipeline: pipeline$1 } = require("node:stream");
+	var util = require_util$1();
 	var { RequestContentLengthMismatchError, RequestAbortedError, SocketError, InformationalError } = require_errors();
-	var { kUrl, kReset, kClient, kRunning, kPending, kQueue, kPendingIdx, kRunningIdx, kError, kSocket, kStrictContentLength, kOnError, kMaxConcurrentStreams, kHTTP2Session, kResume, kSize, kHTTPContext } = require_symbols$4();
+	var { kUrl, kReset, kClient, kRunning, kPending, kQueue, kPendingIdx, kRunningIdx, kError, kSocket, kStrictContentLength, kOnError, kMaxConcurrentStreams, kHTTP2Session, kResume, kSize, kHTTPContext } = require_symbols$1();
 	var kOpenStreams = Symbol("open streams");
 	var extractBody;
 	var h2ExperimentalWarned = false;
@@ -6099,7 +6330,7 @@ var require_client_h2 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 			const err = this[kSocket][kError] || this[kError] || new SocketError("closed", util.getSocketInfo(socket));
 			client[kHTTP2Session] = null;
 			if (client.destroyed) {
-				assert$19(client[kPending] === 0);
+				assert$7(client[kPending] === 0);
 				const requests = client[kQueue].splice(client[kRunningIdx]);
 				for (let i = 0; i < requests.length; i++) {
 					const request = requests[i];
@@ -6111,7 +6342,7 @@ var require_client_h2 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		client[kHTTP2Session] = session;
 		socket[kHTTP2Session] = session;
 		util.addListener(socket, "error", function(err) {
-			assert$19(err.code !== "ERR_TLS_CERT_ALTNAME_INVALID");
+			assert$7(err.code !== "ERR_TLS_CERT_ALTNAME_INVALID");
 			this[kError] = err;
 			this[kClient][kOnError](err);
 		});
@@ -6123,7 +6354,7 @@ var require_client_h2 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 			client[kSocket] = null;
 			if (this[kHTTP2Session] != null) this[kHTTP2Session].destroy(err);
 			client[kPendingIdx] = client[kRunningIdx];
-			assert$19(client[kRunning] === 0);
+			assert$7(client[kRunning] === 0);
 			client.emit("disconnect", client[kUrl], [client], err);
 			client[kResume]();
 		});
@@ -6163,7 +6394,7 @@ var require_client_h2 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		}
 	}
 	function onHttp2SessionError(err) {
-		assert$19(err.code !== "ERR_TLS_CERT_ALTNAME_INVALID");
+		assert$7(err.code !== "ERR_TLS_CERT_ALTNAME_INVALID");
 		this[kSocket][kError] = err;
 		this[kClient][kOnError](err);
 	}
@@ -6200,7 +6431,7 @@ var require_client_h2 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 			util.errorRequest(client, request, err);
 			client[kPendingIdx] = client[kRunningIdx];
 		}
-		assert$19(client[kRunning] === 0);
+		assert$7(client[kRunning] === 0);
 		client.emit("disconnect", client[kUrl], [client], err);
 		client[kResume]();
 	}
@@ -6286,7 +6517,7 @@ var require_client_h2 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 			process.emitWarning(new RequestContentLengthMismatchError());
 		}
 		if (contentLength != null) {
-			assert$19(body, "no body must not have content length");
+			assert$7(body, "no body must not have content length");
 			headers[HTTP2_HEADER_CONTENT_LENGTH] = `${contentLength}`;
 		}
 		session.ref();
@@ -6347,13 +6578,13 @@ var require_client_h2 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 			else writeBlob(abort, stream, body, client, request, client[kSocket], contentLength, expectsPayload);
 			else if (util.isStream(body)) writeStream(abort, client[kSocket], expectsPayload, stream, body, client, request, contentLength);
 			else if (util.isIterable(body)) writeIterable(abort, stream, body, client, request, client[kSocket], contentLength, expectsPayload);
-			else assert$19(false);
+			else assert$7(false);
 		}
 	}
 	function writeBuffer(abort, h2stream, body, client, request, socket, contentLength, expectsPayload) {
 		try {
 			if (body != null && util.isBuffer(body)) {
-				assert$19(contentLength === body.byteLength, "buffer body must have content length");
+				assert$7(contentLength === body.byteLength, "buffer body must have content length");
 				h2stream.cork();
 				h2stream.write(body);
 				h2stream.uncork();
@@ -6368,8 +6599,8 @@ var require_client_h2 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		}
 	}
 	function writeStream(abort, socket, expectsPayload, h2stream, body, client, request, contentLength) {
-		assert$19(contentLength !== 0 || client[kRunning] === 0, "stream body cannot be pipelined");
-		const pipe = pipeline$2(body, h2stream, (err) => {
+		assert$7(contentLength !== 0 || client[kRunning] === 0, "stream body cannot be pipelined");
+		const pipe = pipeline$1(body, h2stream, (err) => {
 			if (err) {
 				util.destroy(pipe, err);
 				abort(err);
@@ -6386,7 +6617,7 @@ var require_client_h2 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		}
 	}
 	async function writeBlob(abort, h2stream, body, client, request, socket, contentLength, expectsPayload) {
-		assert$19(contentLength === body.size, "blob body must have content length");
+		assert$7(contentLength === body.size, "blob body must have content length");
 		try {
 			if (contentLength != null && contentLength !== body.size) throw new RequestContentLengthMismatchError();
 			const buffer = Buffer.from(await body.arrayBuffer());
@@ -6403,7 +6634,7 @@ var require_client_h2 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		}
 	}
 	async function writeIterable(abort, h2stream, body, client, request, socket, contentLength, expectsPayload) {
-		assert$19(contentLength !== 0 || client[kRunning] === 0, "iterator body cannot be pipelined");
+		assert$7(contentLength !== 0 || client[kRunning] === 0, "iterator body cannot be pipelined");
 		let callback = null;
 		function onDrain() {
 			if (callback) {
@@ -6413,7 +6644,7 @@ var require_client_h2 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 			}
 		}
 		const waitForDrain = () => new Promise((resolve, reject) => {
-			assert$19(callback === null);
+			assert$7(callback === null);
 			if (socket[kError]) reject(socket[kError]);
 			else callback = resolve;
 		});
@@ -6440,9 +6671,9 @@ var require_client_h2 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 //#endregion
 //#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/handler/redirect-handler.js
 var require_redirect_handler = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var util = require_util$7();
-	var { kBodyUsed } = require_symbols$4();
-	var assert$18 = require("node:assert");
+	var util = require_util$1();
+	var { kBodyUsed } = require_symbols$1();
+	var assert$6 = require("node:assert");
 	var { InvalidArgumentError } = require_errors();
 	var EE$1 = require("node:events");
 	var redirectableStatusCodes = [
@@ -6460,7 +6691,7 @@ var require_redirect_handler = /* @__PURE__ */ __commonJSMin(((exports, module) 
 			this[kBodyUsed] = false;
 		}
 		async *[Symbol.asyncIterator]() {
-			assert$18(!this[kBodyUsed], "disturbed");
+			assert$6(!this[kBodyUsed], "disturbed");
 			this[kBodyUsed] = true;
 			yield* this[kBody];
 		}
@@ -6482,7 +6713,7 @@ var require_redirect_handler = /* @__PURE__ */ __commonJSMin(((exports, module) 
 			this.redirectionLimitReached = false;
 			if (util.isStream(this.opts.body)) {
 				if (util.bodyLength(this.opts.body) === 0) this.opts.body.on("data", function() {
-					assert$18(false);
+					assert$6(false);
 				});
 				if (typeof this.opts.body.readableDidRead !== "boolean") {
 					this.opts.body[kBodyUsed] = false;
@@ -6558,7 +6789,7 @@ var require_redirect_handler = /* @__PURE__ */ __commonJSMin(((exports, module) 
 			for (let i = 0; i < headers.length; i += 2) if (!shouldRemoveHeader(headers[i], removeContent, unknownOrigin)) ret.push(headers[i], headers[i + 1]);
 		} else if (headers && typeof headers === "object") {
 			for (const key of Object.keys(headers)) if (!shouldRemoveHeader(key, removeContent, unknownOrigin)) ret.push(key, headers[key]);
-		} else assert$18(headers == null, "headers must be an object or an array");
+		} else assert$6(headers == null, "headers must be an object or an array");
 		return ret;
 	}
 	module.exports = RedirectHandler;
@@ -6586,16 +6817,16 @@ var require_redirect_interceptor = /* @__PURE__ */ __commonJSMin(((exports, modu
 //#endregion
 //#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/dispatcher/client.js
 var require_client = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var assert$17 = require("node:assert");
+	var assert$5 = require("node:assert");
 	var net = require("node:net");
 	var http$2 = require("node:http");
-	var util = require_util$7();
+	var util = require_util$1();
 	var { channels } = require_diagnostics();
 	var Request = require_request$1();
 	var DispatcherBase = require_dispatcher_base();
 	var { InvalidArgumentError, InformationalError, ClientDestroyedError } = require_errors();
 	var buildConnector = require_connect();
-	var { kUrl, kServerName, kClient, kBusy, kConnect, kResuming, kRunning, kPending, kSize, kQueue, kConnected, kConnecting, kNeedDrain, kKeepAliveDefaultTimeout, kHostHeader, kPendingIdx, kRunningIdx, kError, kPipelining, kKeepAliveTimeoutValue, kMaxHeadersSize, kKeepAliveMaxTimeout, kKeepAliveTimeoutThreshold, kHeadersTimeout, kBodyTimeout, kStrictContentLength, kConnector, kMaxRedirections, kMaxRequests, kCounter, kClose, kDestroy, kDispatch, kInterceptors, kLocalAddress, kMaxResponseSize, kOnError, kHTTPContext, kMaxConcurrentStreams, kResume } = require_symbols$4();
+	var { kUrl, kServerName, kClient, kBusy, kConnect, kResuming, kRunning, kPending, kSize, kQueue, kConnected, kConnecting, kNeedDrain, kKeepAliveDefaultTimeout, kHostHeader, kPendingIdx, kRunningIdx, kError, kPipelining, kKeepAliveTimeoutValue, kMaxHeadersSize, kKeepAliveMaxTimeout, kKeepAliveTimeoutThreshold, kHeadersTimeout, kBodyTimeout, kStrictContentLength, kConnector, kMaxRedirections, kMaxRequests, kCounter, kClose, kDestroy, kDispatch, kInterceptors, kLocalAddress, kMaxResponseSize, kOnError, kHTTPContext, kMaxConcurrentStreams, kResume } = require_symbols$1();
 	var connectH1 = require_client_h1();
 	var connectH2 = require_client_h2();
 	var deprecatedInterceptorWarned = false;
@@ -6751,13 +6982,13 @@ var require_client = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	var createRedirectInterceptor = require_redirect_interceptor();
 	function onError(client, err) {
 		if (client[kRunning] === 0 && err.code !== "UND_ERR_INFO" && err.code !== "UND_ERR_SOCKET") {
-			assert$17(client[kPendingIdx] === client[kRunningIdx]);
+			assert$5(client[kPendingIdx] === client[kRunningIdx]);
 			const requests = client[kQueue].splice(client[kRunningIdx]);
 			for (let i = 0; i < requests.length; i++) {
 				const request = requests[i];
 				util.errorRequest(client, request, err);
 			}
-			assert$17(client[kSize] === 0);
+			assert$5(client[kSize] === 0);
 		}
 	}
 	/**
@@ -6765,14 +6996,14 @@ var require_client = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	* @returns
 	*/
 	async function connect(client) {
-		assert$17(!client[kConnecting]);
-		assert$17(!client[kHTTPContext]);
+		assert$5(!client[kConnecting]);
+		assert$5(!client[kHTTPContext]);
 		let { host, hostname, protocol, port } = client[kUrl];
 		if (hostname[0] === "[") {
 			const idx = hostname.indexOf("]");
-			assert$17(idx !== -1);
+			assert$5(idx !== -1);
 			const ip = hostname.substring(1, idx);
-			assert$17(net.isIP(ip));
+			assert$5(net.isIP(ip));
 			hostname = ip;
 		}
 		client[kConnecting] = true;
@@ -6806,7 +7037,7 @@ var require_client = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 				util.destroy(socket.on("error", noop), new ClientDestroyedError());
 				return;
 			}
-			assert$17(socket);
+			assert$5(socket);
 			try {
 				client[kHTTPContext] = socket.alpnProtocol === "h2" ? await connectH2(client, socket) : await connectH1(client, socket);
 			} catch (err) {
@@ -6849,7 +7080,7 @@ var require_client = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 				error: err
 			});
 			if (err.code === "ERR_TLS_CERT_ALTNAME_INVALID") {
-				assert$17(client[kRunning] === 0);
+				assert$5(client[kRunning] === 0);
 				while (client[kPending] > 0 && client[kQueue][client[kPendingIdx]].servername === client[kServerName]) {
 					const request = client[kQueue][client[kPendingIdx]++];
 					util.errorRequest(client, request, err);
@@ -6877,7 +7108,7 @@ var require_client = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	function _resume(client, sync) {
 		while (true) {
 			if (client.destroyed) {
-				assert$17(client[kPending] === 0);
+				assert$5(client[kPending] === 0);
 				return;
 			}
 			if (client[kClosedResolve] && !client[kSize]) {
@@ -6919,226 +7150,13 @@ var require_client = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	module.exports = Client;
 }));
 //#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/dispatcher/fixed-queue.js
-var require_fixed_queue = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var kSize = 2048;
-	var kMask = kSize - 1;
-	var FixedCircularBuffer = class {
-		constructor() {
-			this.bottom = 0;
-			this.top = 0;
-			this.list = new Array(kSize);
-			this.next = null;
-		}
-		isEmpty() {
-			return this.top === this.bottom;
-		}
-		isFull() {
-			return (this.top + 1 & kMask) === this.bottom;
-		}
-		push(data) {
-			this.list[this.top] = data;
-			this.top = this.top + 1 & kMask;
-		}
-		shift() {
-			const nextItem = this.list[this.bottom];
-			if (nextItem === void 0) return null;
-			this.list[this.bottom] = void 0;
-			this.bottom = this.bottom + 1 & kMask;
-			return nextItem;
-		}
-	};
-	module.exports = class FixedQueue {
-		constructor() {
-			this.head = this.tail = new FixedCircularBuffer();
-		}
-		isEmpty() {
-			return this.head.isEmpty();
-		}
-		push(data) {
-			if (this.head.isFull()) this.head = this.head.next = new FixedCircularBuffer();
-			this.head.push(data);
-		}
-		shift() {
-			const tail = this.tail;
-			const next = tail.shift();
-			if (tail.isEmpty() && tail.next !== null) this.tail = tail.next;
-			return next;
-		}
-	};
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/dispatcher/pool-stats.js
-var require_pool_stats = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { kFree, kConnected, kPending, kQueued, kRunning, kSize } = require_symbols$4();
-	var kPool = Symbol("pool");
-	var PoolStats = class {
-		constructor(pool) {
-			this[kPool] = pool;
-		}
-		get connected() {
-			return this[kPool][kConnected];
-		}
-		get free() {
-			return this[kPool][kFree];
-		}
-		get pending() {
-			return this[kPool][kPending];
-		}
-		get queued() {
-			return this[kPool][kQueued];
-		}
-		get running() {
-			return this[kPool][kRunning];
-		}
-		get size() {
-			return this[kPool][kSize];
-		}
-	};
-	module.exports = PoolStats;
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/dispatcher/pool-base.js
-var require_pool_base = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var DispatcherBase = require_dispatcher_base();
-	var FixedQueue = require_fixed_queue();
-	var { kConnected, kSize, kRunning, kPending, kQueued, kBusy, kFree, kUrl, kClose, kDestroy, kDispatch } = require_symbols$4();
-	var PoolStats = require_pool_stats();
-	var kClients = Symbol("clients");
-	var kNeedDrain = Symbol("needDrain");
-	var kQueue = Symbol("queue");
-	var kClosedResolve = Symbol("closed resolve");
-	var kOnDrain = Symbol("onDrain");
-	var kOnConnect = Symbol("onConnect");
-	var kOnDisconnect = Symbol("onDisconnect");
-	var kOnConnectionError = Symbol("onConnectionError");
-	var kGetDispatcher = Symbol("get dispatcher");
-	var kAddClient = Symbol("add client");
-	var kRemoveClient = Symbol("remove client");
-	var kStats = Symbol("stats");
-	var PoolBase = class extends DispatcherBase {
-		constructor(opts) {
-			super(opts);
-			this[kQueue] = new FixedQueue();
-			this[kClients] = [];
-			this[kQueued] = 0;
-			const pool = this;
-			this[kOnDrain] = function onDrain(origin, targets) {
-				const queue = pool[kQueue];
-				let needDrain = false;
-				while (!needDrain) {
-					const item = queue.shift();
-					if (!item) break;
-					pool[kQueued]--;
-					needDrain = !this.dispatch(item.opts, item.handler);
-				}
-				this[kNeedDrain] = needDrain;
-				if (!this[kNeedDrain] && pool[kNeedDrain]) {
-					pool[kNeedDrain] = false;
-					pool.emit("drain", origin, [pool, ...targets]);
-				}
-				if (pool[kClosedResolve] && queue.isEmpty()) Promise.all(pool[kClients].map((c) => c.close())).then(pool[kClosedResolve]);
-			};
-			this[kOnConnect] = (origin, targets) => {
-				pool.emit("connect", origin, [pool, ...targets]);
-			};
-			this[kOnDisconnect] = (origin, targets, err) => {
-				pool.emit("disconnect", origin, [pool, ...targets], err);
-			};
-			this[kOnConnectionError] = (origin, targets, err) => {
-				pool.emit("connectionError", origin, [pool, ...targets], err);
-			};
-			this[kStats] = new PoolStats(this);
-		}
-		get [kBusy]() {
-			return this[kNeedDrain];
-		}
-		get [kConnected]() {
-			return this[kClients].filter((client) => client[kConnected]).length;
-		}
-		get [kFree]() {
-			return this[kClients].filter((client) => client[kConnected] && !client[kNeedDrain]).length;
-		}
-		get [kPending]() {
-			let ret = this[kQueued];
-			for (const { [kPending]: pending } of this[kClients]) ret += pending;
-			return ret;
-		}
-		get [kRunning]() {
-			let ret = 0;
-			for (const { [kRunning]: running } of this[kClients]) ret += running;
-			return ret;
-		}
-		get [kSize]() {
-			let ret = this[kQueued];
-			for (const { [kSize]: size } of this[kClients]) ret += size;
-			return ret;
-		}
-		get stats() {
-			return this[kStats];
-		}
-		async [kClose]() {
-			if (this[kQueue].isEmpty()) await Promise.all(this[kClients].map((c) => c.close()));
-			else await new Promise((resolve) => {
-				this[kClosedResolve] = resolve;
-			});
-		}
-		async [kDestroy](err) {
-			while (true) {
-				const item = this[kQueue].shift();
-				if (!item) break;
-				item.handler.onError(err);
-			}
-			await Promise.all(this[kClients].map((c) => c.destroy(err)));
-		}
-		[kDispatch](opts, handler) {
-			const dispatcher = this[kGetDispatcher]();
-			if (!dispatcher) {
-				this[kNeedDrain] = true;
-				this[kQueue].push({
-					opts,
-					handler
-				});
-				this[kQueued]++;
-			} else if (!dispatcher.dispatch(opts, handler)) {
-				dispatcher[kNeedDrain] = true;
-				this[kNeedDrain] = !this[kGetDispatcher]();
-			}
-			return !this[kNeedDrain];
-		}
-		[kAddClient](client) {
-			client.on("drain", this[kOnDrain]).on("connect", this[kOnConnect]).on("disconnect", this[kOnDisconnect]).on("connectionError", this[kOnConnectionError]);
-			this[kClients].push(client);
-			if (this[kNeedDrain]) queueMicrotask(() => {
-				if (this[kNeedDrain]) this[kOnDrain](client[kUrl], [this, client]);
-			});
-			return this;
-		}
-		[kRemoveClient](client) {
-			client.close(() => {
-				const idx = this[kClients].indexOf(client);
-				if (idx !== -1) this[kClients].splice(idx, 1);
-			});
-			this[kNeedDrain] = this[kClients].some((dispatcher) => !dispatcher[kNeedDrain] && dispatcher.closed !== true && dispatcher.destroyed !== true);
-		}
-	};
-	module.exports = {
-		PoolBase,
-		kClients,
-		kNeedDrain,
-		kAddClient,
-		kRemoveClient,
-		kGetDispatcher
-	};
-}));
-//#endregion
 //#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/dispatcher/pool.js
 var require_pool = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	var { PoolBase, kClients, kNeedDrain, kAddClient, kGetDispatcher } = require_pool_base();
 	var Client = require_client();
 	var { InvalidArgumentError } = require_errors();
-	var util = require_util$7();
-	var { kUrl, kInterceptors } = require_symbols$4();
+	var util = require_util$1();
+	var { kUrl, kInterceptors } = require_symbols$1();
 	var buildConnector = require_connect();
 	var kOptions = Symbol("options");
 	var kConnections = Symbol("connections");
@@ -7193,125 +7211,14 @@ var require_pool = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	module.exports = Pool;
 }));
 //#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/dispatcher/balanced-pool.js
-var require_balanced_pool = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { BalancedPoolMissingUpstreamError, InvalidArgumentError } = require_errors();
-	var { PoolBase, kClients, kNeedDrain, kAddClient, kRemoveClient, kGetDispatcher } = require_pool_base();
-	var Pool = require_pool();
-	var { kUrl, kInterceptors } = require_symbols$4();
-	var { parseOrigin } = require_util$7();
-	var kFactory = Symbol("factory");
-	var kOptions = Symbol("options");
-	var kGreatestCommonDivisor = Symbol("kGreatestCommonDivisor");
-	var kCurrentWeight = Symbol("kCurrentWeight");
-	var kIndex = Symbol("kIndex");
-	var kWeight = Symbol("kWeight");
-	var kMaxWeightPerServer = Symbol("kMaxWeightPerServer");
-	var kErrorPenalty = Symbol("kErrorPenalty");
-	/**
-	* Calculate the greatest common divisor of two numbers by
-	* using the Euclidean algorithm.
-	*
-	* @param {number} a
-	* @param {number} b
-	* @returns {number}
-	*/
-	function getGreatestCommonDivisor(a, b) {
-		if (a === 0) return b;
-		while (b !== 0) {
-			const t = b;
-			b = a % b;
-			a = t;
-		}
-		return a;
-	}
-	function defaultFactory(origin, opts) {
-		return new Pool(origin, opts);
-	}
-	var BalancedPool = class extends PoolBase {
-		constructor(upstreams = [], { factory = defaultFactory, ...opts } = {}) {
-			super();
-			this[kOptions] = opts;
-			this[kIndex] = -1;
-			this[kCurrentWeight] = 0;
-			this[kMaxWeightPerServer] = this[kOptions].maxWeightPerServer || 100;
-			this[kErrorPenalty] = this[kOptions].errorPenalty || 15;
-			if (!Array.isArray(upstreams)) upstreams = [upstreams];
-			if (typeof factory !== "function") throw new InvalidArgumentError("factory must be a function.");
-			this[kInterceptors] = opts.interceptors?.BalancedPool && Array.isArray(opts.interceptors.BalancedPool) ? opts.interceptors.BalancedPool : [];
-			this[kFactory] = factory;
-			for (const upstream of upstreams) this.addUpstream(upstream);
-			this._updateBalancedPoolStats();
-		}
-		addUpstream(upstream) {
-			const upstreamOrigin = parseOrigin(upstream).origin;
-			if (this[kClients].find((pool) => pool[kUrl].origin === upstreamOrigin && pool.closed !== true && pool.destroyed !== true)) return this;
-			const pool = this[kFactory](upstreamOrigin, Object.assign({}, this[kOptions]));
-			this[kAddClient](pool);
-			pool.on("connect", () => {
-				pool[kWeight] = Math.min(this[kMaxWeightPerServer], pool[kWeight] + this[kErrorPenalty]);
-			});
-			pool.on("connectionError", () => {
-				pool[kWeight] = Math.max(1, pool[kWeight] - this[kErrorPenalty]);
-				this._updateBalancedPoolStats();
-			});
-			pool.on("disconnect", (...args) => {
-				const err = args[2];
-				if (err && err.code === "UND_ERR_SOCKET") {
-					pool[kWeight] = Math.max(1, pool[kWeight] - this[kErrorPenalty]);
-					this._updateBalancedPoolStats();
-				}
-			});
-			for (const client of this[kClients]) client[kWeight] = this[kMaxWeightPerServer];
-			this._updateBalancedPoolStats();
-			return this;
-		}
-		_updateBalancedPoolStats() {
-			let result = 0;
-			for (let i = 0; i < this[kClients].length; i++) result = getGreatestCommonDivisor(this[kClients][i][kWeight], result);
-			this[kGreatestCommonDivisor] = result;
-		}
-		removeUpstream(upstream) {
-			const upstreamOrigin = parseOrigin(upstream).origin;
-			const pool = this[kClients].find((pool) => pool[kUrl].origin === upstreamOrigin && pool.closed !== true && pool.destroyed !== true);
-			if (pool) this[kRemoveClient](pool);
-			return this;
-		}
-		get upstreams() {
-			return this[kClients].filter((dispatcher) => dispatcher.closed !== true && dispatcher.destroyed !== true).map((p) => p[kUrl].origin);
-		}
-		[kGetDispatcher]() {
-			if (this[kClients].length === 0) throw new BalancedPoolMissingUpstreamError();
-			if (!this[kClients].find((dispatcher) => !dispatcher[kNeedDrain] && dispatcher.closed !== true && dispatcher.destroyed !== true)) return;
-			if (this[kClients].map((pool) => pool[kNeedDrain]).reduce((a, b) => a && b, true)) return;
-			let counter = 0;
-			let maxWeightIndex = this[kClients].findIndex((pool) => !pool[kNeedDrain]);
-			while (counter++ < this[kClients].length) {
-				this[kIndex] = (this[kIndex] + 1) % this[kClients].length;
-				const pool = this[kClients][this[kIndex]];
-				if (pool[kWeight] > this[kClients][maxWeightIndex][kWeight] && !pool[kNeedDrain]) maxWeightIndex = this[kIndex];
-				if (this[kIndex] === 0) {
-					this[kCurrentWeight] = this[kCurrentWeight] - this[kGreatestCommonDivisor];
-					if (this[kCurrentWeight] <= 0) this[kCurrentWeight] = this[kMaxWeightPerServer];
-				}
-				if (pool[kWeight] >= this[kCurrentWeight] && !pool[kNeedDrain]) return pool;
-			}
-			this[kCurrentWeight] = this[kClients][maxWeightIndex][kWeight];
-			this[kIndex] = maxWeightIndex;
-			return this[kClients][maxWeightIndex];
-		}
-	};
-	module.exports = BalancedPool;
-}));
-//#endregion
 //#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/dispatcher/agent.js
 var require_agent = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	var { InvalidArgumentError } = require_errors();
-	var { kClients, kRunning, kClose, kDestroy, kDispatch, kInterceptors } = require_symbols$4();
+	var { kClients, kRunning, kClose, kDestroy, kDispatch, kInterceptors } = require_symbols$1();
 	var DispatcherBase = require_dispatcher_base();
 	var Pool = require_pool();
 	var Client = require_client();
-	var util = require_util$7();
+	var util = require_util$1();
 	var createRedirectInterceptor = require_redirect_interceptor();
 	var kOnConnect = Symbol("onConnect");
 	var kOnDisconnect = Symbol("onDisconnect");
@@ -7386,7 +7293,7 @@ var require_agent = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 //#endregion
 //#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/dispatcher/proxy-agent.js
 var require_proxy_agent = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { kProxy, kClose, kDestroy, kDispatch, kInterceptors } = require_symbols$4();
+	var { kProxy, kClose, kDestroy, kDispatch, kInterceptors } = require_symbols$1();
 	var { URL: URL$1 } = require("node:url");
 	var Agent = require_agent();
 	var Pool = require_pool();
@@ -7582,2370 +7489,13 @@ var require_proxy_agent = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	module.exports = ProxyAgent;
 }));
 //#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/dispatcher/env-http-proxy-agent.js
-var require_env_http_proxy_agent = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var DispatcherBase = require_dispatcher_base();
-	var { kClose, kDestroy, kClosed, kDestroyed, kDispatch, kNoProxyAgent, kHttpProxyAgent, kHttpsProxyAgent } = require_symbols$4();
-	var ProxyAgent = require_proxy_agent();
-	var Agent = require_agent();
-	var DEFAULT_PORTS = {
-		"http:": 80,
-		"https:": 443
-	};
-	var experimentalWarned = false;
-	var EnvHttpProxyAgent = class extends DispatcherBase {
-		#noProxyValue = null;
-		#noProxyEntries = null;
-		#opts = null;
-		constructor(opts = {}) {
-			super();
-			this.#opts = opts;
-			if (!experimentalWarned) {
-				experimentalWarned = true;
-				process.emitWarning("EnvHttpProxyAgent is experimental, expect them to change at any time.", { code: "UNDICI-EHPA" });
-			}
-			const { httpProxy, httpsProxy, noProxy, ...agentOpts } = opts;
-			this[kNoProxyAgent] = new Agent(agentOpts);
-			const HTTP_PROXY = httpProxy ?? process.env.http_proxy ?? process.env.HTTP_PROXY;
-			if (HTTP_PROXY) this[kHttpProxyAgent] = new ProxyAgent({
-				...agentOpts,
-				uri: HTTP_PROXY
-			});
-			else this[kHttpProxyAgent] = this[kNoProxyAgent];
-			const HTTPS_PROXY = httpsProxy ?? process.env.https_proxy ?? process.env.HTTPS_PROXY;
-			if (HTTPS_PROXY) this[kHttpsProxyAgent] = new ProxyAgent({
-				...agentOpts,
-				uri: HTTPS_PROXY
-			});
-			else this[kHttpsProxyAgent] = this[kHttpProxyAgent];
-			this.#parseNoProxy();
-		}
-		[kDispatch](opts, handler) {
-			const url = new URL(opts.origin);
-			return this.#getProxyAgentForUrl(url).dispatch(opts, handler);
-		}
-		async [kClose]() {
-			await this[kNoProxyAgent].close();
-			if (!this[kHttpProxyAgent][kClosed]) await this[kHttpProxyAgent].close();
-			if (!this[kHttpsProxyAgent][kClosed]) await this[kHttpsProxyAgent].close();
-		}
-		async [kDestroy](err) {
-			await this[kNoProxyAgent].destroy(err);
-			if (!this[kHttpProxyAgent][kDestroyed]) await this[kHttpProxyAgent].destroy(err);
-			if (!this[kHttpsProxyAgent][kDestroyed]) await this[kHttpsProxyAgent].destroy(err);
-		}
-		#getProxyAgentForUrl(url) {
-			let { protocol, host: hostname, port } = url;
-			hostname = hostname.replace(/:\d*$/, "").toLowerCase();
-			port = Number.parseInt(port, 10) || DEFAULT_PORTS[protocol] || 0;
-			if (!this.#shouldProxy(hostname, port)) return this[kNoProxyAgent];
-			if (protocol === "https:") return this[kHttpsProxyAgent];
-			return this[kHttpProxyAgent];
-		}
-		#shouldProxy(hostname, port) {
-			if (this.#noProxyChanged) this.#parseNoProxy();
-			if (this.#noProxyEntries.length === 0) return true;
-			if (this.#noProxyValue === "*") return false;
-			for (let i = 0; i < this.#noProxyEntries.length; i++) {
-				const entry = this.#noProxyEntries[i];
-				if (entry.port && entry.port !== port) continue;
-				if (!/^[.*]/.test(entry.hostname)) {
-					if (hostname === entry.hostname) return false;
-				} else if (hostname.endsWith(entry.hostname.replace(/^\*/, ""))) return false;
-			}
-			return true;
-		}
-		#parseNoProxy() {
-			const noProxyValue = this.#opts.noProxy ?? this.#noProxyEnv;
-			const noProxySplit = noProxyValue.split(/[,\s]/);
-			const noProxyEntries = [];
-			for (let i = 0; i < noProxySplit.length; i++) {
-				const entry = noProxySplit[i];
-				if (!entry) continue;
-				const parsed = entry.match(/^(.+):(\d+)$/);
-				noProxyEntries.push({
-					hostname: (parsed ? parsed[1] : entry).toLowerCase(),
-					port: parsed ? Number.parseInt(parsed[2], 10) : 0
-				});
-			}
-			this.#noProxyValue = noProxyValue;
-			this.#noProxyEntries = noProxyEntries;
-		}
-		get #noProxyChanged() {
-			if (this.#opts.noProxy !== void 0) return false;
-			return this.#noProxyValue !== this.#noProxyEnv;
-		}
-		get #noProxyEnv() {
-			return process.env.no_proxy ?? process.env.NO_PROXY ?? "";
-		}
-	};
-	module.exports = EnvHttpProxyAgent;
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/handler/retry-handler.js
-var require_retry_handler = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var assert$16 = require("node:assert");
-	var { kRetryHandlerDefaultRetry } = require_symbols$4();
-	var { RequestRetryError } = require_errors();
-	var { isDisturbed, parseHeaders, parseRangeHeader, wrapRequestBody } = require_util$7();
-	function calculateRetryAfterHeader(retryAfter) {
-		const current = Date.now();
-		return new Date(retryAfter).getTime() - current;
-	}
-	module.exports = class RetryHandler {
-		constructor(opts, handlers) {
-			const { retryOptions, ...dispatchOpts } = opts;
-			const { retry: retryFn, maxRetries, maxTimeout, minTimeout, timeoutFactor, methods, errorCodes, retryAfter, statusCodes } = retryOptions ?? {};
-			this.dispatch = handlers.dispatch;
-			this.handler = handlers.handler;
-			this.opts = {
-				...dispatchOpts,
-				body: wrapRequestBody(opts.body)
-			};
-			this.abort = null;
-			this.aborted = false;
-			this.retryOpts = {
-				retry: retryFn ?? RetryHandler[kRetryHandlerDefaultRetry],
-				retryAfter: retryAfter ?? true,
-				maxTimeout: maxTimeout ?? 30 * 1e3,
-				minTimeout: minTimeout ?? 500,
-				timeoutFactor: timeoutFactor ?? 2,
-				maxRetries: maxRetries ?? 5,
-				methods: methods ?? [
-					"GET",
-					"HEAD",
-					"OPTIONS",
-					"PUT",
-					"DELETE",
-					"TRACE"
-				],
-				statusCodes: statusCodes ?? [
-					500,
-					502,
-					503,
-					504,
-					429
-				],
-				errorCodes: errorCodes ?? [
-					"ECONNRESET",
-					"ECONNREFUSED",
-					"ENOTFOUND",
-					"ENETDOWN",
-					"ENETUNREACH",
-					"EHOSTDOWN",
-					"EHOSTUNREACH",
-					"EPIPE",
-					"UND_ERR_SOCKET"
-				]
-			};
-			this.retryCount = 0;
-			this.retryCountCheckpoint = 0;
-			this.start = 0;
-			this.end = null;
-			this.etag = null;
-			this.resume = null;
-			this.handler.onConnect((reason) => {
-				this.aborted = true;
-				if (this.abort) this.abort(reason);
-				else this.reason = reason;
-			});
-		}
-		onRequestSent() {
-			if (this.handler.onRequestSent) this.handler.onRequestSent();
-		}
-		onUpgrade(statusCode, headers, socket) {
-			if (this.handler.onUpgrade) this.handler.onUpgrade(statusCode, headers, socket);
-		}
-		onConnect(abort) {
-			if (this.aborted) abort(this.reason);
-			else this.abort = abort;
-		}
-		onBodySent(chunk) {
-			if (this.handler.onBodySent) return this.handler.onBodySent(chunk);
-		}
-		static [kRetryHandlerDefaultRetry](err, { state, opts }, cb) {
-			const { statusCode, code, headers } = err;
-			const { method, retryOptions } = opts;
-			const { maxRetries, minTimeout, maxTimeout, timeoutFactor, statusCodes, errorCodes, methods } = retryOptions;
-			const { counter } = state;
-			if (code && code !== "UND_ERR_REQ_RETRY" && !errorCodes.includes(code)) {
-				cb(err);
-				return;
-			}
-			if (Array.isArray(methods) && !methods.includes(method)) {
-				cb(err);
-				return;
-			}
-			if (statusCode != null && Array.isArray(statusCodes) && !statusCodes.includes(statusCode)) {
-				cb(err);
-				return;
-			}
-			if (counter > maxRetries) {
-				cb(err);
-				return;
-			}
-			let retryAfterHeader = headers?.["retry-after"];
-			if (retryAfterHeader) {
-				retryAfterHeader = Number(retryAfterHeader);
-				retryAfterHeader = Number.isNaN(retryAfterHeader) ? calculateRetryAfterHeader(retryAfterHeader) : retryAfterHeader * 1e3;
-			}
-			const retryTimeout = retryAfterHeader > 0 ? Math.min(retryAfterHeader, maxTimeout) : Math.min(minTimeout * timeoutFactor ** (counter - 1), maxTimeout);
-			setTimeout(() => cb(null), retryTimeout);
-		}
-		onHeaders(statusCode, rawHeaders, resume, statusMessage) {
-			const headers = parseHeaders(rawHeaders);
-			this.retryCount += 1;
-			if (statusCode >= 300) if (this.retryOpts.statusCodes.includes(statusCode) === false) return this.handler.onHeaders(statusCode, rawHeaders, resume, statusMessage);
-			else {
-				this.abort(new RequestRetryError("Request failed", statusCode, {
-					headers,
-					data: { count: this.retryCount }
-				}));
-				return false;
-			}
-			if (this.resume != null) {
-				this.resume = null;
-				if (statusCode !== 206 && (this.start > 0 || statusCode !== 200)) {
-					this.abort(new RequestRetryError("server does not support the range header and the payload was partially consumed", statusCode, {
-						headers,
-						data: { count: this.retryCount }
-					}));
-					return false;
-				}
-				const contentRange = parseRangeHeader(headers["content-range"]);
-				if (!contentRange) {
-					this.abort(new RequestRetryError("Content-Range mismatch", statusCode, {
-						headers,
-						data: { count: this.retryCount }
-					}));
-					return false;
-				}
-				if (this.etag != null && this.etag !== headers.etag) {
-					this.abort(new RequestRetryError("ETag mismatch", statusCode, {
-						headers,
-						data: { count: this.retryCount }
-					}));
-					return false;
-				}
-				const { start, size, end = size - 1 } = contentRange;
-				assert$16(this.start === start, "content-range mismatch");
-				assert$16(this.end == null || this.end === end, "content-range mismatch");
-				this.resume = resume;
-				return true;
-			}
-			if (this.end == null) {
-				if (statusCode === 206) {
-					const range = parseRangeHeader(headers["content-range"]);
-					if (range == null) return this.handler.onHeaders(statusCode, rawHeaders, resume, statusMessage);
-					const { start, size, end = size - 1 } = range;
-					assert$16(start != null && Number.isFinite(start), "content-range mismatch");
-					assert$16(end != null && Number.isFinite(end), "invalid content-length");
-					this.start = start;
-					this.end = end;
-				}
-				if (this.end == null) {
-					const contentLength = headers["content-length"];
-					this.end = contentLength != null ? Number(contentLength) - 1 : null;
-				}
-				assert$16(Number.isFinite(this.start));
-				assert$16(this.end == null || Number.isFinite(this.end), "invalid content-length");
-				this.resume = resume;
-				this.etag = headers.etag != null ? headers.etag : null;
-				if (this.etag != null && this.etag.startsWith("W/")) this.etag = null;
-				return this.handler.onHeaders(statusCode, rawHeaders, resume, statusMessage);
-			}
-			const err = new RequestRetryError("Request failed", statusCode, {
-				headers,
-				data: { count: this.retryCount }
-			});
-			this.abort(err);
-			return false;
-		}
-		onData(chunk) {
-			this.start += chunk.length;
-			return this.handler.onData(chunk);
-		}
-		onComplete(rawTrailers) {
-			this.retryCount = 0;
-			return this.handler.onComplete(rawTrailers);
-		}
-		onError(err) {
-			if (this.aborted || isDisturbed(this.opts.body)) return this.handler.onError(err);
-			if (this.retryCount - this.retryCountCheckpoint > 0) this.retryCount = this.retryCountCheckpoint + (this.retryCount - this.retryCountCheckpoint);
-			else this.retryCount += 1;
-			this.retryOpts.retry(err, {
-				state: { counter: this.retryCount },
-				opts: {
-					retryOptions: this.retryOpts,
-					...this.opts
-				}
-			}, onRetry.bind(this));
-			function onRetry(err) {
-				if (err != null || this.aborted || isDisturbed(this.opts.body)) return this.handler.onError(err);
-				if (this.start !== 0) {
-					const headers = { range: `bytes=${this.start}-${this.end ?? ""}` };
-					if (this.etag != null) headers["if-match"] = this.etag;
-					this.opts = {
-						...this.opts,
-						headers: {
-							...this.opts.headers,
-							...headers
-						}
-					};
-				}
-				try {
-					this.retryCountCheckpoint = this.retryCount;
-					this.dispatch(this.opts, this);
-				} catch (err) {
-					this.handler.onError(err);
-				}
-			}
-		}
-	};
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/dispatcher/retry-agent.js
-var require_retry_agent = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var Dispatcher = require_dispatcher();
-	var RetryHandler = require_retry_handler();
-	var RetryAgent = class extends Dispatcher {
-		#agent = null;
-		#options = null;
-		constructor(agent, options = {}) {
-			super(options);
-			this.#agent = agent;
-			this.#options = options;
-		}
-		dispatch(opts, handler) {
-			const retry = new RetryHandler({
-				...opts,
-				retryOptions: this.#options
-			}, {
-				dispatch: this.#agent.dispatch.bind(this.#agent),
-				handler
-			});
-			return this.#agent.dispatch(opts, retry);
-		}
-		close() {
-			return this.#agent.close();
-		}
-		destroy() {
-			return this.#agent.destroy();
-		}
-	};
-	module.exports = RetryAgent;
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/api/readable.js
-var require_readable = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var assert$15 = require("node:assert");
-	var { Readable: Readable$2 } = require("node:stream");
-	var { RequestAbortedError, NotSupportedError, InvalidArgumentError, AbortError } = require_errors();
-	var util = require_util$7();
-	var { ReadableStreamFrom } = require_util$7();
-	var kConsume = Symbol("kConsume");
-	var kReading = Symbol("kReading");
-	var kBody = Symbol("kBody");
-	var kAbort = Symbol("kAbort");
-	var kContentType = Symbol("kContentType");
-	var kContentLength = Symbol("kContentLength");
-	var noop = () => {};
-	var BodyReadable = class extends Readable$2 {
-		constructor({ resume, abort, contentType = "", contentLength, highWaterMark = 64 * 1024 }) {
-			super({
-				autoDestroy: true,
-				read: resume,
-				highWaterMark
-			});
-			this._readableState.dataEmitted = false;
-			this[kAbort] = abort;
-			this[kConsume] = null;
-			this[kBody] = null;
-			this[kContentType] = contentType;
-			this[kContentLength] = contentLength;
-			this[kReading] = false;
-		}
-		destroy(err) {
-			if (!err && !this._readableState.endEmitted) err = new RequestAbortedError();
-			if (err) this[kAbort]();
-			return super.destroy(err);
-		}
-		_destroy(err, callback) {
-			if (!this[kReading]) setImmediate(() => {
-				callback(err);
-			});
-			else callback(err);
-		}
-		on(ev, ...args) {
-			if (ev === "data" || ev === "readable") this[kReading] = true;
-			return super.on(ev, ...args);
-		}
-		addListener(ev, ...args) {
-			return this.on(ev, ...args);
-		}
-		off(ev, ...args) {
-			const ret = super.off(ev, ...args);
-			if (ev === "data" || ev === "readable") this[kReading] = this.listenerCount("data") > 0 || this.listenerCount("readable") > 0;
-			return ret;
-		}
-		removeListener(ev, ...args) {
-			return this.off(ev, ...args);
-		}
-		push(chunk) {
-			if (this[kConsume] && chunk !== null) {
-				consumePush(this[kConsume], chunk);
-				return this[kReading] ? super.push(chunk) : true;
-			}
-			return super.push(chunk);
-		}
-		async text() {
-			return consume(this, "text");
-		}
-		async json() {
-			return consume(this, "json");
-		}
-		async blob() {
-			return consume(this, "blob");
-		}
-		async bytes() {
-			return consume(this, "bytes");
-		}
-		async arrayBuffer() {
-			return consume(this, "arrayBuffer");
-		}
-		async formData() {
-			throw new NotSupportedError();
-		}
-		get bodyUsed() {
-			return util.isDisturbed(this);
-		}
-		get body() {
-			if (!this[kBody]) {
-				this[kBody] = ReadableStreamFrom(this);
-				if (this[kConsume]) {
-					this[kBody].getReader();
-					assert$15(this[kBody].locked);
-				}
-			}
-			return this[kBody];
-		}
-		async dump(opts) {
-			let limit = Number.isFinite(opts?.limit) ? opts.limit : 128 * 1024;
-			const signal = opts?.signal;
-			if (signal != null && (typeof signal !== "object" || !("aborted" in signal))) throw new InvalidArgumentError("signal must be an AbortSignal");
-			signal?.throwIfAborted();
-			if (this._readableState.closeEmitted) return null;
-			return await new Promise((resolve, reject) => {
-				if (this[kContentLength] > limit) this.destroy(new AbortError());
-				const onAbort = () => {
-					this.destroy(signal.reason ?? new AbortError());
-				};
-				signal?.addEventListener("abort", onAbort);
-				this.on("close", function() {
-					signal?.removeEventListener("abort", onAbort);
-					if (signal?.aborted) reject(signal.reason ?? new AbortError());
-					else resolve(null);
-				}).on("error", noop).on("data", function(chunk) {
-					limit -= chunk.length;
-					if (limit <= 0) this.destroy();
-				}).resume();
-			});
-		}
-	};
-	function isLocked(self) {
-		return self[kBody] && self[kBody].locked === true || self[kConsume];
-	}
-	function isUnusable(self) {
-		return util.isDisturbed(self) || isLocked(self);
-	}
-	async function consume(stream, type) {
-		assert$15(!stream[kConsume]);
-		return new Promise((resolve, reject) => {
-			if (isUnusable(stream)) {
-				const rState = stream._readableState;
-				if (rState.destroyed && rState.closeEmitted === false) stream.on("error", (err) => {
-					reject(err);
-				}).on("close", () => {
-					reject(/* @__PURE__ */ new TypeError("unusable"));
-				});
-				else reject(rState.errored ?? /* @__PURE__ */ new TypeError("unusable"));
-			} else queueMicrotask(() => {
-				stream[kConsume] = {
-					type,
-					stream,
-					resolve,
-					reject,
-					length: 0,
-					body: []
-				};
-				stream.on("error", function(err) {
-					consumeFinish(this[kConsume], err);
-				}).on("close", function() {
-					if (this[kConsume].body !== null) consumeFinish(this[kConsume], new RequestAbortedError());
-				});
-				consumeStart(stream[kConsume]);
-			});
-		});
-	}
-	function consumeStart(consume) {
-		if (consume.body === null) return;
-		const { _readableState: state } = consume.stream;
-		if (state.bufferIndex) {
-			const start = state.bufferIndex;
-			const end = state.buffer.length;
-			for (let n = start; n < end; n++) consumePush(consume, state.buffer[n]);
-		} else for (const chunk of state.buffer) consumePush(consume, chunk);
-		if (state.endEmitted) consumeEnd(this[kConsume]);
-		else consume.stream.on("end", function() {
-			consumeEnd(this[kConsume]);
-		});
-		consume.stream.resume();
-		while (consume.stream.read() != null);
-	}
-	/**
-	* @param {Buffer[]} chunks
-	* @param {number} length
-	*/
-	function chunksDecode(chunks, length) {
-		if (chunks.length === 0 || length === 0) return "";
-		const buffer = chunks.length === 1 ? chunks[0] : Buffer.concat(chunks, length);
-		const bufferLength = buffer.length;
-		const start = bufferLength > 2 && buffer[0] === 239 && buffer[1] === 187 && buffer[2] === 191 ? 3 : 0;
-		return buffer.utf8Slice(start, bufferLength);
-	}
-	/**
-	* @param {Buffer[]} chunks
-	* @param {number} length
-	* @returns {Uint8Array}
-	*/
-	function chunksConcat(chunks, length) {
-		if (chunks.length === 0 || length === 0) return /* @__PURE__ */ new Uint8Array(0);
-		if (chunks.length === 1) return new Uint8Array(chunks[0]);
-		const buffer = new Uint8Array(Buffer.allocUnsafeSlow(length).buffer);
-		let offset = 0;
-		for (let i = 0; i < chunks.length; ++i) {
-			const chunk = chunks[i];
-			buffer.set(chunk, offset);
-			offset += chunk.length;
-		}
-		return buffer;
-	}
-	function consumeEnd(consume) {
-		const { type, body, resolve, stream, length } = consume;
-		try {
-			if (type === "text") resolve(chunksDecode(body, length));
-			else if (type === "json") resolve(JSON.parse(chunksDecode(body, length)));
-			else if (type === "arrayBuffer") resolve(chunksConcat(body, length).buffer);
-			else if (type === "blob") resolve(new Blob(body, { type: stream[kContentType] }));
-			else if (type === "bytes") resolve(chunksConcat(body, length));
-			consumeFinish(consume);
-		} catch (err) {
-			stream.destroy(err);
-		}
-	}
-	function consumePush(consume, chunk) {
-		consume.length += chunk.length;
-		consume.body.push(chunk);
-	}
-	function consumeFinish(consume, err) {
-		if (consume.body === null) return;
-		if (err) consume.reject(err);
-		else consume.resolve();
-		consume.type = null;
-		consume.stream = null;
-		consume.resolve = null;
-		consume.reject = null;
-		consume.length = 0;
-		consume.body = null;
-	}
-	module.exports = {
-		Readable: BodyReadable,
-		chunksDecode
-	};
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/api/util.js
-var require_util$5 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var assert$14 = require("node:assert");
-	var { ResponseStatusCodeError } = require_errors();
-	var { chunksDecode } = require_readable();
-	var CHUNK_LIMIT = 128 * 1024;
-	async function getResolveErrorBodyCallback({ callback, body, contentType, statusCode, statusMessage, headers }) {
-		assert$14(body);
-		let chunks = [];
-		let length = 0;
-		try {
-			for await (const chunk of body) {
-				chunks.push(chunk);
-				length += chunk.length;
-				if (length > CHUNK_LIMIT) {
-					chunks = [];
-					length = 0;
-					break;
-				}
-			}
-		} catch {
-			chunks = [];
-			length = 0;
-		}
-		const message = `Response status code ${statusCode}${statusMessage ? `: ${statusMessage}` : ""}`;
-		if (statusCode === 204 || !contentType || !length) {
-			queueMicrotask(() => callback(new ResponseStatusCodeError(message, statusCode, headers)));
-			return;
-		}
-		const stackTraceLimit = Error.stackTraceLimit;
-		Error.stackTraceLimit = 0;
-		let payload;
-		try {
-			if (isContentTypeApplicationJson(contentType)) payload = JSON.parse(chunksDecode(chunks, length));
-			else if (isContentTypeText(contentType)) payload = chunksDecode(chunks, length);
-		} catch {} finally {
-			Error.stackTraceLimit = stackTraceLimit;
-		}
-		queueMicrotask(() => callback(new ResponseStatusCodeError(message, statusCode, headers, payload)));
-	}
-	var isContentTypeApplicationJson = (contentType) => {
-		return contentType.length > 15 && contentType[11] === "/" && contentType[0] === "a" && contentType[1] === "p" && contentType[2] === "p" && contentType[3] === "l" && contentType[4] === "i" && contentType[5] === "c" && contentType[6] === "a" && contentType[7] === "t" && contentType[8] === "i" && contentType[9] === "o" && contentType[10] === "n" && contentType[12] === "j" && contentType[13] === "s" && contentType[14] === "o" && contentType[15] === "n";
-	};
-	var isContentTypeText = (contentType) => {
-		return contentType.length > 4 && contentType[4] === "/" && contentType[0] === "t" && contentType[1] === "e" && contentType[2] === "x" && contentType[3] === "t";
-	};
-	module.exports = {
-		getResolveErrorBodyCallback,
-		isContentTypeApplicationJson,
-		isContentTypeText
-	};
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/api/api-request.js
-var require_api_request = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var assert$13 = require("node:assert");
-	var { Readable } = require_readable();
-	var { InvalidArgumentError, RequestAbortedError } = require_errors();
-	var util = require_util$7();
-	var { getResolveErrorBodyCallback } = require_util$5();
-	var { AsyncResource: AsyncResource$4 } = require("node:async_hooks");
-	var RequestHandler = class extends AsyncResource$4 {
-		constructor(opts, callback) {
-			if (!opts || typeof opts !== "object") throw new InvalidArgumentError("invalid opts");
-			const { signal, method, opaque, body, onInfo, responseHeaders, throwOnError, highWaterMark } = opts;
-			try {
-				if (typeof callback !== "function") throw new InvalidArgumentError("invalid callback");
-				if (highWaterMark && (typeof highWaterMark !== "number" || highWaterMark < 0)) throw new InvalidArgumentError("invalid highWaterMark");
-				if (signal && typeof signal.on !== "function" && typeof signal.addEventListener !== "function") throw new InvalidArgumentError("signal must be an EventEmitter or EventTarget");
-				if (method === "CONNECT") throw new InvalidArgumentError("invalid method");
-				if (onInfo && typeof onInfo !== "function") throw new InvalidArgumentError("invalid onInfo callback");
-				super("UNDICI_REQUEST");
-			} catch (err) {
-				if (util.isStream(body)) util.destroy(body.on("error", util.nop), err);
-				throw err;
-			}
-			this.method = method;
-			this.responseHeaders = responseHeaders || null;
-			this.opaque = opaque || null;
-			this.callback = callback;
-			this.res = null;
-			this.abort = null;
-			this.body = body;
-			this.trailers = {};
-			this.context = null;
-			this.onInfo = onInfo || null;
-			this.throwOnError = throwOnError;
-			this.highWaterMark = highWaterMark;
-			this.signal = signal;
-			this.reason = null;
-			this.removeAbortListener = null;
-			if (util.isStream(body)) body.on("error", (err) => {
-				this.onError(err);
-			});
-			if (this.signal) if (this.signal.aborted) this.reason = this.signal.reason ?? new RequestAbortedError();
-			else this.removeAbortListener = util.addAbortListener(this.signal, () => {
-				this.reason = this.signal.reason ?? new RequestAbortedError();
-				if (this.res) util.destroy(this.res.on("error", util.nop), this.reason);
-				else if (this.abort) this.abort(this.reason);
-				if (this.removeAbortListener) {
-					this.res?.off("close", this.removeAbortListener);
-					this.removeAbortListener();
-					this.removeAbortListener = null;
-				}
-			});
-		}
-		onConnect(abort, context) {
-			if (this.reason) {
-				abort(this.reason);
-				return;
-			}
-			assert$13(this.callback);
-			this.abort = abort;
-			this.context = context;
-		}
-		onHeaders(statusCode, rawHeaders, resume, statusMessage) {
-			const { callback, opaque, abort, context, responseHeaders, highWaterMark } = this;
-			const headers = responseHeaders === "raw" ? util.parseRawHeaders(rawHeaders) : util.parseHeaders(rawHeaders);
-			if (statusCode < 200) {
-				if (this.onInfo) this.onInfo({
-					statusCode,
-					headers
-				});
-				return;
-			}
-			const parsedHeaders = responseHeaders === "raw" ? util.parseHeaders(rawHeaders) : headers;
-			const contentType = parsedHeaders["content-type"];
-			const contentLength = parsedHeaders["content-length"];
-			const res = new Readable({
-				resume,
-				abort,
-				contentType,
-				contentLength: this.method !== "HEAD" && contentLength ? Number(contentLength) : null,
-				highWaterMark
-			});
-			if (this.removeAbortListener) res.on("close", this.removeAbortListener);
-			this.callback = null;
-			this.res = res;
-			if (callback !== null) if (this.throwOnError && statusCode >= 400) this.runInAsyncScope(getResolveErrorBodyCallback, null, {
-				callback,
-				body: res,
-				contentType,
-				statusCode,
-				statusMessage,
-				headers
-			});
-			else this.runInAsyncScope(callback, null, null, {
-				statusCode,
-				headers,
-				trailers: this.trailers,
-				opaque,
-				body: res,
-				context
-			});
-		}
-		onData(chunk) {
-			return this.res.push(chunk);
-		}
-		onComplete(trailers) {
-			util.parseHeaders(trailers, this.trailers);
-			this.res.push(null);
-		}
-		onError(err) {
-			const { res, callback, body, opaque } = this;
-			if (callback) {
-				this.callback = null;
-				queueMicrotask(() => {
-					this.runInAsyncScope(callback, null, err, { opaque });
-				});
-			}
-			if (res) {
-				this.res = null;
-				queueMicrotask(() => {
-					util.destroy(res, err);
-				});
-			}
-			if (body) {
-				this.body = null;
-				util.destroy(body, err);
-			}
-			if (this.removeAbortListener) {
-				res?.off("close", this.removeAbortListener);
-				this.removeAbortListener();
-				this.removeAbortListener = null;
-			}
-		}
-	};
-	function request(opts, callback) {
-		if (callback === void 0) return new Promise((resolve, reject) => {
-			request.call(this, opts, (err, data) => {
-				return err ? reject(err) : resolve(data);
-			});
-		});
-		try {
-			this.dispatch(opts, new RequestHandler(opts, callback));
-		} catch (err) {
-			if (typeof callback !== "function") throw err;
-			const opaque = opts?.opaque;
-			queueMicrotask(() => callback(err, { opaque }));
-		}
-	}
-	module.exports = request;
-	module.exports.RequestHandler = RequestHandler;
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/api/abort-signal.js
-var require_abort_signal = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { addAbortListener } = require_util$7();
-	var { RequestAbortedError } = require_errors();
-	var kListener = Symbol("kListener");
-	var kSignal = Symbol("kSignal");
-	function abort(self) {
-		if (self.abort) self.abort(self[kSignal]?.reason);
-		else self.reason = self[kSignal]?.reason ?? new RequestAbortedError();
-		removeSignal(self);
-	}
-	function addSignal(self, signal) {
-		self.reason = null;
-		self[kSignal] = null;
-		self[kListener] = null;
-		if (!signal) return;
-		if (signal.aborted) {
-			abort(self);
-			return;
-		}
-		self[kSignal] = signal;
-		self[kListener] = () => {
-			abort(self);
-		};
-		addAbortListener(self[kSignal], self[kListener]);
-	}
-	function removeSignal(self) {
-		if (!self[kSignal]) return;
-		if ("removeEventListener" in self[kSignal]) self[kSignal].removeEventListener("abort", self[kListener]);
-		else self[kSignal].removeListener("abort", self[kListener]);
-		self[kSignal] = null;
-		self[kListener] = null;
-	}
-	module.exports = {
-		addSignal,
-		removeSignal
-	};
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/api/api-stream.js
-var require_api_stream = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var assert$12 = require("node:assert");
-	var { finished: finished$1, PassThrough: PassThrough$1 } = require("node:stream");
-	var { InvalidArgumentError, InvalidReturnValueError } = require_errors();
-	var util = require_util$7();
-	var { getResolveErrorBodyCallback } = require_util$5();
-	var { AsyncResource: AsyncResource$3 } = require("node:async_hooks");
-	var { addSignal, removeSignal } = require_abort_signal();
-	var StreamHandler = class extends AsyncResource$3 {
-		constructor(opts, factory, callback) {
-			if (!opts || typeof opts !== "object") throw new InvalidArgumentError("invalid opts");
-			const { signal, method, opaque, body, onInfo, responseHeaders, throwOnError } = opts;
-			try {
-				if (typeof callback !== "function") throw new InvalidArgumentError("invalid callback");
-				if (typeof factory !== "function") throw new InvalidArgumentError("invalid factory");
-				if (signal && typeof signal.on !== "function" && typeof signal.addEventListener !== "function") throw new InvalidArgumentError("signal must be an EventEmitter or EventTarget");
-				if (method === "CONNECT") throw new InvalidArgumentError("invalid method");
-				if (onInfo && typeof onInfo !== "function") throw new InvalidArgumentError("invalid onInfo callback");
-				super("UNDICI_STREAM");
-			} catch (err) {
-				if (util.isStream(body)) util.destroy(body.on("error", util.nop), err);
-				throw err;
-			}
-			this.responseHeaders = responseHeaders || null;
-			this.opaque = opaque || null;
-			this.factory = factory;
-			this.callback = callback;
-			this.res = null;
-			this.abort = null;
-			this.context = null;
-			this.trailers = null;
-			this.body = body;
-			this.onInfo = onInfo || null;
-			this.throwOnError = throwOnError || false;
-			if (util.isStream(body)) body.on("error", (err) => {
-				this.onError(err);
-			});
-			addSignal(this, signal);
-		}
-		onConnect(abort, context) {
-			if (this.reason) {
-				abort(this.reason);
-				return;
-			}
-			assert$12(this.callback);
-			this.abort = abort;
-			this.context = context;
-		}
-		onHeaders(statusCode, rawHeaders, resume, statusMessage) {
-			const { factory, opaque, context, callback, responseHeaders } = this;
-			const headers = responseHeaders === "raw" ? util.parseRawHeaders(rawHeaders) : util.parseHeaders(rawHeaders);
-			if (statusCode < 200) {
-				if (this.onInfo) this.onInfo({
-					statusCode,
-					headers
-				});
-				return;
-			}
-			this.factory = null;
-			let res;
-			if (this.throwOnError && statusCode >= 400) {
-				const contentType = (responseHeaders === "raw" ? util.parseHeaders(rawHeaders) : headers)["content-type"];
-				res = new PassThrough$1();
-				this.callback = null;
-				this.runInAsyncScope(getResolveErrorBodyCallback, null, {
-					callback,
-					body: res,
-					contentType,
-					statusCode,
-					statusMessage,
-					headers
-				});
-			} else {
-				if (factory === null) return;
-				res = this.runInAsyncScope(factory, null, {
-					statusCode,
-					headers,
-					opaque,
-					context
-				});
-				if (!res || typeof res.write !== "function" || typeof res.end !== "function" || typeof res.on !== "function") throw new InvalidReturnValueError("expected Writable");
-				finished$1(res, { readable: false }, (err) => {
-					const { callback, res, opaque, trailers, abort } = this;
-					this.res = null;
-					if (err || !res.readable) util.destroy(res, err);
-					this.callback = null;
-					this.runInAsyncScope(callback, null, err || null, {
-						opaque,
-						trailers
-					});
-					if (err) abort();
-				});
-			}
-			res.on("drain", resume);
-			this.res = res;
-			return (res.writableNeedDrain !== void 0 ? res.writableNeedDrain : res._writableState?.needDrain) !== true;
-		}
-		onData(chunk) {
-			const { res } = this;
-			return res ? res.write(chunk) : true;
-		}
-		onComplete(trailers) {
-			const { res } = this;
-			removeSignal(this);
-			if (!res) return;
-			this.trailers = util.parseHeaders(trailers);
-			res.end();
-		}
-		onError(err) {
-			const { res, callback, opaque, body } = this;
-			removeSignal(this);
-			this.factory = null;
-			if (res) {
-				this.res = null;
-				util.destroy(res, err);
-			} else if (callback) {
-				this.callback = null;
-				queueMicrotask(() => {
-					this.runInAsyncScope(callback, null, err, { opaque });
-				});
-			}
-			if (body) {
-				this.body = null;
-				util.destroy(body, err);
-			}
-		}
-	};
-	function stream(opts, factory, callback) {
-		if (callback === void 0) return new Promise((resolve, reject) => {
-			stream.call(this, opts, factory, (err, data) => {
-				return err ? reject(err) : resolve(data);
-			});
-		});
-		try {
-			this.dispatch(opts, new StreamHandler(opts, factory, callback));
-		} catch (err) {
-			if (typeof callback !== "function") throw err;
-			const opaque = opts?.opaque;
-			queueMicrotask(() => callback(err, { opaque }));
-		}
-	}
-	module.exports = stream;
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/api/api-pipeline.js
-var require_api_pipeline = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { Readable: Readable$1, Duplex, PassThrough } = require("node:stream");
-	var { InvalidArgumentError, InvalidReturnValueError, RequestAbortedError } = require_errors();
-	var util = require_util$7();
-	var { AsyncResource: AsyncResource$2 } = require("node:async_hooks");
-	var { addSignal, removeSignal } = require_abort_signal();
-	var assert$11 = require("node:assert");
-	var kResume = Symbol("resume");
-	var PipelineRequest = class extends Readable$1 {
-		constructor() {
-			super({ autoDestroy: true });
-			this[kResume] = null;
-		}
-		_read() {
-			const { [kResume]: resume } = this;
-			if (resume) {
-				this[kResume] = null;
-				resume();
-			}
-		}
-		_destroy(err, callback) {
-			this._read();
-			callback(err);
-		}
-	};
-	var PipelineResponse = class extends Readable$1 {
-		constructor(resume) {
-			super({ autoDestroy: true });
-			this[kResume] = resume;
-		}
-		_read() {
-			this[kResume]();
-		}
-		_destroy(err, callback) {
-			if (!err && !this._readableState.endEmitted) err = new RequestAbortedError();
-			callback(err);
-		}
-	};
-	var PipelineHandler = class extends AsyncResource$2 {
-		constructor(opts, handler) {
-			if (!opts || typeof opts !== "object") throw new InvalidArgumentError("invalid opts");
-			if (typeof handler !== "function") throw new InvalidArgumentError("invalid handler");
-			const { signal, method, opaque, onInfo, responseHeaders } = opts;
-			if (signal && typeof signal.on !== "function" && typeof signal.addEventListener !== "function") throw new InvalidArgumentError("signal must be an EventEmitter or EventTarget");
-			if (method === "CONNECT") throw new InvalidArgumentError("invalid method");
-			if (onInfo && typeof onInfo !== "function") throw new InvalidArgumentError("invalid onInfo callback");
-			super("UNDICI_PIPELINE");
-			this.opaque = opaque || null;
-			this.responseHeaders = responseHeaders || null;
-			this.handler = handler;
-			this.abort = null;
-			this.context = null;
-			this.onInfo = onInfo || null;
-			this.req = new PipelineRequest().on("error", util.nop);
-			this.ret = new Duplex({
-				readableObjectMode: opts.objectMode,
-				autoDestroy: true,
-				read: () => {
-					const { body } = this;
-					if (body?.resume) body.resume();
-				},
-				write: (chunk, encoding, callback) => {
-					const { req } = this;
-					if (req.push(chunk, encoding) || req._readableState.destroyed) callback();
-					else req[kResume] = callback;
-				},
-				destroy: (err, callback) => {
-					const { body, req, res, ret, abort } = this;
-					if (!err && !ret._readableState.endEmitted) err = new RequestAbortedError();
-					if (abort && err) abort();
-					util.destroy(body, err);
-					util.destroy(req, err);
-					util.destroy(res, err);
-					removeSignal(this);
-					callback(err);
-				}
-			}).on("prefinish", () => {
-				const { req } = this;
-				req.push(null);
-			});
-			this.res = null;
-			addSignal(this, signal);
-		}
-		onConnect(abort, context) {
-			const { ret, res } = this;
-			if (this.reason) {
-				abort(this.reason);
-				return;
-			}
-			assert$11(!res, "pipeline cannot be retried");
-			assert$11(!ret.destroyed);
-			this.abort = abort;
-			this.context = context;
-		}
-		onHeaders(statusCode, rawHeaders, resume) {
-			const { opaque, handler, context } = this;
-			if (statusCode < 200) {
-				if (this.onInfo) {
-					const headers = this.responseHeaders === "raw" ? util.parseRawHeaders(rawHeaders) : util.parseHeaders(rawHeaders);
-					this.onInfo({
-						statusCode,
-						headers
-					});
-				}
-				return;
-			}
-			this.res = new PipelineResponse(resume);
-			let body;
-			try {
-				this.handler = null;
-				const headers = this.responseHeaders === "raw" ? util.parseRawHeaders(rawHeaders) : util.parseHeaders(rawHeaders);
-				body = this.runInAsyncScope(handler, null, {
-					statusCode,
-					headers,
-					opaque,
-					body: this.res,
-					context
-				});
-			} catch (err) {
-				this.res.on("error", util.nop);
-				throw err;
-			}
-			if (!body || typeof body.on !== "function") throw new InvalidReturnValueError("expected Readable");
-			body.on("data", (chunk) => {
-				const { ret, body } = this;
-				if (!ret.push(chunk) && body.pause) body.pause();
-			}).on("error", (err) => {
-				const { ret } = this;
-				util.destroy(ret, err);
-			}).on("end", () => {
-				const { ret } = this;
-				ret.push(null);
-			}).on("close", () => {
-				const { ret } = this;
-				if (!ret._readableState.ended) util.destroy(ret, new RequestAbortedError());
-			});
-			this.body = body;
-		}
-		onData(chunk) {
-			const { res } = this;
-			return res.push(chunk);
-		}
-		onComplete(trailers) {
-			const { res } = this;
-			res.push(null);
-		}
-		onError(err) {
-			const { ret } = this;
-			this.handler = null;
-			util.destroy(ret, err);
-		}
-	};
-	function pipeline(opts, handler) {
-		try {
-			const pipelineHandler = new PipelineHandler(opts, handler);
-			this.dispatch({
-				...opts,
-				body: pipelineHandler.req
-			}, pipelineHandler);
-			return pipelineHandler.ret;
-		} catch (err) {
-			return new PassThrough().destroy(err);
-		}
-	}
-	module.exports = pipeline;
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/api/api-upgrade.js
-var require_api_upgrade = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { InvalidArgumentError, SocketError } = require_errors();
-	var { AsyncResource: AsyncResource$1 } = require("node:async_hooks");
-	var util = require_util$7();
-	var { addSignal, removeSignal } = require_abort_signal();
-	var assert$10 = require("node:assert");
-	var UpgradeHandler = class extends AsyncResource$1 {
-		constructor(opts, callback) {
-			if (!opts || typeof opts !== "object") throw new InvalidArgumentError("invalid opts");
-			if (typeof callback !== "function") throw new InvalidArgumentError("invalid callback");
-			const { signal, opaque, responseHeaders } = opts;
-			if (signal && typeof signal.on !== "function" && typeof signal.addEventListener !== "function") throw new InvalidArgumentError("signal must be an EventEmitter or EventTarget");
-			super("UNDICI_UPGRADE");
-			this.responseHeaders = responseHeaders || null;
-			this.opaque = opaque || null;
-			this.callback = callback;
-			this.abort = null;
-			this.context = null;
-			addSignal(this, signal);
-		}
-		onConnect(abort, context) {
-			if (this.reason) {
-				abort(this.reason);
-				return;
-			}
-			assert$10(this.callback);
-			this.abort = abort;
-			this.context = null;
-		}
-		onHeaders() {
-			throw new SocketError("bad upgrade", null);
-		}
-		onUpgrade(statusCode, rawHeaders, socket) {
-			assert$10(statusCode === 101);
-			const { callback, opaque, context } = this;
-			removeSignal(this);
-			this.callback = null;
-			const headers = this.responseHeaders === "raw" ? util.parseRawHeaders(rawHeaders) : util.parseHeaders(rawHeaders);
-			this.runInAsyncScope(callback, null, null, {
-				headers,
-				socket,
-				opaque,
-				context
-			});
-		}
-		onError(err) {
-			const { callback, opaque } = this;
-			removeSignal(this);
-			if (callback) {
-				this.callback = null;
-				queueMicrotask(() => {
-					this.runInAsyncScope(callback, null, err, { opaque });
-				});
-			}
-		}
-	};
-	function upgrade(opts, callback) {
-		if (callback === void 0) return new Promise((resolve, reject) => {
-			upgrade.call(this, opts, (err, data) => {
-				return err ? reject(err) : resolve(data);
-			});
-		});
-		try {
-			const upgradeHandler = new UpgradeHandler(opts, callback);
-			this.dispatch({
-				...opts,
-				method: opts.method || "GET",
-				upgrade: opts.protocol || "Websocket"
-			}, upgradeHandler);
-		} catch (err) {
-			if (typeof callback !== "function") throw err;
-			const opaque = opts?.opaque;
-			queueMicrotask(() => callback(err, { opaque }));
-		}
-	}
-	module.exports = upgrade;
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/api/api-connect.js
-var require_api_connect = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var assert$9 = require("node:assert");
-	var { AsyncResource } = require("node:async_hooks");
-	var { InvalidArgumentError, SocketError } = require_errors();
-	var util = require_util$7();
-	var { addSignal, removeSignal } = require_abort_signal();
-	var ConnectHandler = class extends AsyncResource {
-		constructor(opts, callback) {
-			if (!opts || typeof opts !== "object") throw new InvalidArgumentError("invalid opts");
-			if (typeof callback !== "function") throw new InvalidArgumentError("invalid callback");
-			const { signal, opaque, responseHeaders } = opts;
-			if (signal && typeof signal.on !== "function" && typeof signal.addEventListener !== "function") throw new InvalidArgumentError("signal must be an EventEmitter or EventTarget");
-			super("UNDICI_CONNECT");
-			this.opaque = opaque || null;
-			this.responseHeaders = responseHeaders || null;
-			this.callback = callback;
-			this.abort = null;
-			addSignal(this, signal);
-		}
-		onConnect(abort, context) {
-			if (this.reason) {
-				abort(this.reason);
-				return;
-			}
-			assert$9(this.callback);
-			this.abort = abort;
-			this.context = context;
-		}
-		onHeaders() {
-			throw new SocketError("bad connect", null);
-		}
-		onUpgrade(statusCode, rawHeaders, socket) {
-			const { callback, opaque, context } = this;
-			removeSignal(this);
-			this.callback = null;
-			let headers = rawHeaders;
-			if (headers != null) headers = this.responseHeaders === "raw" ? util.parseRawHeaders(rawHeaders) : util.parseHeaders(rawHeaders);
-			this.runInAsyncScope(callback, null, null, {
-				statusCode,
-				headers,
-				socket,
-				opaque,
-				context
-			});
-		}
-		onError(err) {
-			const { callback, opaque } = this;
-			removeSignal(this);
-			if (callback) {
-				this.callback = null;
-				queueMicrotask(() => {
-					this.runInAsyncScope(callback, null, err, { opaque });
-				});
-			}
-		}
-	};
-	function connect(opts, callback) {
-		if (callback === void 0) return new Promise((resolve, reject) => {
-			connect.call(this, opts, (err, data) => {
-				return err ? reject(err) : resolve(data);
-			});
-		});
-		try {
-			const connectHandler = new ConnectHandler(opts, callback);
-			this.dispatch({
-				...opts,
-				method: "CONNECT"
-			}, connectHandler);
-		} catch (err) {
-			if (typeof callback !== "function") throw err;
-			const opaque = opts?.opaque;
-			queueMicrotask(() => callback(err, { opaque }));
-		}
-	}
-	module.exports = connect;
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/api/index.js
-var require_api = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	module.exports.request = require_api_request();
-	module.exports.stream = require_api_stream();
-	module.exports.pipeline = require_api_pipeline();
-	module.exports.upgrade = require_api_upgrade();
-	module.exports.connect = require_api_connect();
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/mock/mock-errors.js
-var require_mock_errors = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { UndiciError } = require_errors();
-	var kMockNotMatchedError = Symbol.for("undici.error.UND_MOCK_ERR_MOCK_NOT_MATCHED");
-	module.exports = { MockNotMatchedError: class MockNotMatchedError extends UndiciError {
-		constructor(message) {
-			super(message);
-			Error.captureStackTrace(this, MockNotMatchedError);
-			this.name = "MockNotMatchedError";
-			this.message = message || "The request does not match any registered mock dispatches";
-			this.code = "UND_MOCK_ERR_MOCK_NOT_MATCHED";
-		}
-		static [Symbol.hasInstance](instance) {
-			return instance && instance[kMockNotMatchedError] === true;
-		}
-		[kMockNotMatchedError] = true;
-	} };
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/mock/mock-symbols.js
-var require_mock_symbols = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	module.exports = {
-		kAgent: Symbol("agent"),
-		kOptions: Symbol("options"),
-		kFactory: Symbol("factory"),
-		kDispatches: Symbol("dispatches"),
-		kDispatchKey: Symbol("dispatch key"),
-		kDefaultHeaders: Symbol("default headers"),
-		kDefaultTrailers: Symbol("default trailers"),
-		kContentLength: Symbol("content length"),
-		kMockAgent: Symbol("mock agent"),
-		kMockAgentSet: Symbol("mock agent set"),
-		kMockAgentGet: Symbol("mock agent get"),
-		kMockDispatch: Symbol("mock dispatch"),
-		kClose: Symbol("close"),
-		kOriginalClose: Symbol("original agent close"),
-		kOrigin: Symbol("origin"),
-		kIsMockActive: Symbol("is mock active"),
-		kNetConnect: Symbol("net connect"),
-		kGetNetConnect: Symbol("get net connect"),
-		kConnected: Symbol("connected")
-	};
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/mock/mock-utils.js
-var require_mock_utils = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { MockNotMatchedError } = require_mock_errors();
-	var { kDispatches, kMockAgent, kOriginalDispatch, kOrigin, kGetNetConnect } = require_mock_symbols();
-	var { buildURL } = require_util$7();
-	var { STATUS_CODES: STATUS_CODES$1 } = require("node:http");
-	var { types: { isPromise } } = require("node:util");
-	function matchValue(match, value) {
-		if (typeof match === "string") return match === value;
-		if (match instanceof RegExp) return match.test(value);
-		if (typeof match === "function") return match(value) === true;
-		return false;
-	}
-	function lowerCaseEntries(headers) {
-		return Object.fromEntries(Object.entries(headers).map(([headerName, headerValue]) => {
-			return [headerName.toLocaleLowerCase(), headerValue];
-		}));
-	}
-	/**
-	* @param {import('../../index').Headers|string[]|Record<string, string>} headers
-	* @param {string} key
-	*/
-	function getHeaderByName(headers, key) {
-		if (Array.isArray(headers)) {
-			for (let i = 0; i < headers.length; i += 2) if (headers[i].toLocaleLowerCase() === key.toLocaleLowerCase()) return headers[i + 1];
-			return;
-		} else if (typeof headers.get === "function") return headers.get(key);
-		else return lowerCaseEntries(headers)[key.toLocaleLowerCase()];
-	}
-	/** @param {string[]} headers */
-	function buildHeadersFromArray(headers) {
-		const clone = headers.slice();
-		const entries = [];
-		for (let index = 0; index < clone.length; index += 2) entries.push([clone[index], clone[index + 1]]);
-		return Object.fromEntries(entries);
-	}
-	function matchHeaders(mockDispatch, headers) {
-		if (typeof mockDispatch.headers === "function") {
-			if (Array.isArray(headers)) headers = buildHeadersFromArray(headers);
-			return mockDispatch.headers(headers ? lowerCaseEntries(headers) : {});
-		}
-		if (typeof mockDispatch.headers === "undefined") return true;
-		if (typeof headers !== "object" || typeof mockDispatch.headers !== "object") return false;
-		for (const [matchHeaderName, matchHeaderValue] of Object.entries(mockDispatch.headers)) if (!matchValue(matchHeaderValue, getHeaderByName(headers, matchHeaderName))) return false;
-		return true;
-	}
-	function safeUrl(path) {
-		if (typeof path !== "string") return path;
-		const pathSegments = path.split("?");
-		if (pathSegments.length !== 2) return path;
-		const qp = new URLSearchParams(pathSegments.pop());
-		qp.sort();
-		return [...pathSegments, qp.toString()].join("?");
-	}
-	function matchKey(mockDispatch, { path, method, body, headers }) {
-		const pathMatch = matchValue(mockDispatch.path, path);
-		const methodMatch = matchValue(mockDispatch.method, method);
-		const bodyMatch = typeof mockDispatch.body !== "undefined" ? matchValue(mockDispatch.body, body) : true;
-		const headersMatch = matchHeaders(mockDispatch, headers);
-		return pathMatch && methodMatch && bodyMatch && headersMatch;
-	}
-	function getResponseData(data) {
-		if (Buffer.isBuffer(data)) return data;
-		else if (data instanceof Uint8Array) return data;
-		else if (data instanceof ArrayBuffer) return data;
-		else if (typeof data === "object") return JSON.stringify(data);
-		else return data.toString();
-	}
-	function getMockDispatch(mockDispatches, key) {
-		const basePath = key.query ? buildURL(key.path, key.query) : key.path;
-		const resolvedPath = typeof basePath === "string" ? safeUrl(basePath) : basePath;
-		let matchedMockDispatches = mockDispatches.filter(({ consumed }) => !consumed).filter(({ path }) => matchValue(safeUrl(path), resolvedPath));
-		if (matchedMockDispatches.length === 0) throw new MockNotMatchedError(`Mock dispatch not matched for path '${resolvedPath}'`);
-		matchedMockDispatches = matchedMockDispatches.filter(({ method }) => matchValue(method, key.method));
-		if (matchedMockDispatches.length === 0) throw new MockNotMatchedError(`Mock dispatch not matched for method '${key.method}' on path '${resolvedPath}'`);
-		matchedMockDispatches = matchedMockDispatches.filter(({ body }) => typeof body !== "undefined" ? matchValue(body, key.body) : true);
-		if (matchedMockDispatches.length === 0) throw new MockNotMatchedError(`Mock dispatch not matched for body '${key.body}' on path '${resolvedPath}'`);
-		matchedMockDispatches = matchedMockDispatches.filter((mockDispatch) => matchHeaders(mockDispatch, key.headers));
-		if (matchedMockDispatches.length === 0) throw new MockNotMatchedError(`Mock dispatch not matched for headers '${typeof key.headers === "object" ? JSON.stringify(key.headers) : key.headers}' on path '${resolvedPath}'`);
-		return matchedMockDispatches[0];
-	}
-	function addMockDispatch(mockDispatches, key, data) {
-		const baseData = {
-			timesInvoked: 0,
-			times: 1,
-			persist: false,
-			consumed: false
-		};
-		const replyData = typeof data === "function" ? { callback: data } : { ...data };
-		const newMockDispatch = {
-			...baseData,
-			...key,
-			pending: true,
-			data: {
-				error: null,
-				...replyData
-			}
-		};
-		mockDispatches.push(newMockDispatch);
-		return newMockDispatch;
-	}
-	function deleteMockDispatch(mockDispatches, key) {
-		const index = mockDispatches.findIndex((dispatch) => {
-			if (!dispatch.consumed) return false;
-			return matchKey(dispatch, key);
-		});
-		if (index !== -1) mockDispatches.splice(index, 1);
-	}
-	function buildKey(opts) {
-		const { path, method, body, headers, query } = opts;
-		return {
-			path,
-			method,
-			body,
-			headers,
-			query
-		};
-	}
-	function generateKeyValues(data) {
-		const keys = Object.keys(data);
-		const result = [];
-		for (let i = 0; i < keys.length; ++i) {
-			const key = keys[i];
-			const value = data[key];
-			const name = Buffer.from(`${key}`);
-			if (Array.isArray(value)) for (let j = 0; j < value.length; ++j) result.push(name, Buffer.from(`${value[j]}`));
-			else result.push(name, Buffer.from(`${value}`));
-		}
-		return result;
-	}
-	/**
-	* @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Status
-	* @param {number} statusCode
-	*/
-	function getStatusText(statusCode) {
-		return STATUS_CODES$1[statusCode] || "unknown";
-	}
-	async function getResponse(body) {
-		const buffers = [];
-		for await (const data of body) buffers.push(data);
-		return Buffer.concat(buffers).toString("utf8");
-	}
-	/**
-	* Mock dispatch function used to simulate undici dispatches
-	*/
-	function mockDispatch(opts, handler) {
-		const key = buildKey(opts);
-		const mockDispatch = getMockDispatch(this[kDispatches], key);
-		mockDispatch.timesInvoked++;
-		if (mockDispatch.data.callback) mockDispatch.data = {
-			...mockDispatch.data,
-			...mockDispatch.data.callback(opts)
-		};
-		const { data: { statusCode, data, headers, trailers, error }, delay, persist } = mockDispatch;
-		const { timesInvoked, times } = mockDispatch;
-		mockDispatch.consumed = !persist && timesInvoked >= times;
-		mockDispatch.pending = timesInvoked < times;
-		if (error !== null) {
-			deleteMockDispatch(this[kDispatches], key);
-			handler.onError(error);
-			return true;
-		}
-		if (typeof delay === "number" && delay > 0) setTimeout(() => {
-			handleReply(this[kDispatches]);
-		}, delay);
-		else handleReply(this[kDispatches]);
-		function handleReply(mockDispatches, _data = data) {
-			const optsHeaders = Array.isArray(opts.headers) ? buildHeadersFromArray(opts.headers) : opts.headers;
-			const body = typeof _data === "function" ? _data({
-				...opts,
-				headers: optsHeaders
-			}) : _data;
-			if (isPromise(body)) {
-				body.then((newData) => handleReply(mockDispatches, newData));
-				return;
-			}
-			const responseData = getResponseData(body);
-			const responseHeaders = generateKeyValues(headers);
-			const responseTrailers = generateKeyValues(trailers);
-			handler.onConnect?.((err) => handler.onError(err), null);
-			handler.onHeaders?.(statusCode, responseHeaders, resume, getStatusText(statusCode));
-			handler.onData?.(Buffer.from(responseData));
-			handler.onComplete?.(responseTrailers);
-			deleteMockDispatch(mockDispatches, key);
-		}
-		function resume() {}
-		return true;
-	}
-	function buildMockDispatch() {
-		const agent = this[kMockAgent];
-		const origin = this[kOrigin];
-		const originalDispatch = this[kOriginalDispatch];
-		return function dispatch(opts, handler) {
-			if (agent.isMockActive) try {
-				mockDispatch.call(this, opts, handler);
-			} catch (error) {
-				if (error instanceof MockNotMatchedError) {
-					const netConnect = agent[kGetNetConnect]();
-					if (netConnect === false) throw new MockNotMatchedError(`${error.message}: subsequent request to origin ${origin} was not allowed (net.connect disabled)`);
-					if (checkNetConnect(netConnect, origin)) originalDispatch.call(this, opts, handler);
-					else throw new MockNotMatchedError(`${error.message}: subsequent request to origin ${origin} was not allowed (net.connect is not enabled for this origin)`);
-				} else throw error;
-			}
-			else originalDispatch.call(this, opts, handler);
-		};
-	}
-	function checkNetConnect(netConnect, origin) {
-		const url = new URL(origin);
-		if (netConnect === true) return true;
-		else if (Array.isArray(netConnect) && netConnect.some((matcher) => matchValue(matcher, url.host))) return true;
-		return false;
-	}
-	function buildMockOptions(opts) {
-		if (opts) {
-			const { agent, ...mockOptions } = opts;
-			return mockOptions;
-		}
-	}
-	module.exports = {
-		getResponseData,
-		getMockDispatch,
-		addMockDispatch,
-		deleteMockDispatch,
-		buildKey,
-		generateKeyValues,
-		matchValue,
-		getResponse,
-		getStatusText,
-		mockDispatch,
-		buildMockDispatch,
-		checkNetConnect,
-		buildMockOptions,
-		getHeaderByName,
-		buildHeadersFromArray
-	};
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/mock/mock-interceptor.js
-var require_mock_interceptor = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { getResponseData, buildKey, addMockDispatch } = require_mock_utils();
-	var { kDispatches, kDispatchKey, kDefaultHeaders, kDefaultTrailers, kContentLength, kMockDispatch } = require_mock_symbols();
-	var { InvalidArgumentError } = require_errors();
-	var { buildURL } = require_util$7();
-	/**
-	* Defines the scope API for an interceptor reply
-	*/
-	var MockScope = class {
-		constructor(mockDispatch) {
-			this[kMockDispatch] = mockDispatch;
-		}
-		/**
-		* Delay a reply by a set amount in ms.
-		*/
-		delay(waitInMs) {
-			if (typeof waitInMs !== "number" || !Number.isInteger(waitInMs) || waitInMs <= 0) throw new InvalidArgumentError("waitInMs must be a valid integer > 0");
-			this[kMockDispatch].delay = waitInMs;
-			return this;
-		}
-		/**
-		* For a defined reply, never mark as consumed.
-		*/
-		persist() {
-			this[kMockDispatch].persist = true;
-			return this;
-		}
-		/**
-		* Allow one to define a reply for a set amount of matching requests.
-		*/
-		times(repeatTimes) {
-			if (typeof repeatTimes !== "number" || !Number.isInteger(repeatTimes) || repeatTimes <= 0) throw new InvalidArgumentError("repeatTimes must be a valid integer > 0");
-			this[kMockDispatch].times = repeatTimes;
-			return this;
-		}
-	};
-	/**
-	* Defines an interceptor for a Mock
-	*/
-	var MockInterceptor = class {
-		constructor(opts, mockDispatches) {
-			if (typeof opts !== "object") throw new InvalidArgumentError("opts must be an object");
-			if (typeof opts.path === "undefined") throw new InvalidArgumentError("opts.path must be defined");
-			if (typeof opts.method === "undefined") opts.method = "GET";
-			if (typeof opts.path === "string") if (opts.query) opts.path = buildURL(opts.path, opts.query);
-			else {
-				const parsedURL = new URL(opts.path, "data://");
-				opts.path = parsedURL.pathname + parsedURL.search;
-			}
-			if (typeof opts.method === "string") opts.method = opts.method.toUpperCase();
-			this[kDispatchKey] = buildKey(opts);
-			this[kDispatches] = mockDispatches;
-			this[kDefaultHeaders] = {};
-			this[kDefaultTrailers] = {};
-			this[kContentLength] = false;
-		}
-		createMockScopeDispatchData({ statusCode, data, responseOptions }) {
-			const responseData = getResponseData(data);
-			const contentLength = this[kContentLength] ? { "content-length": responseData.length } : {};
-			return {
-				statusCode,
-				data,
-				headers: {
-					...this[kDefaultHeaders],
-					...contentLength,
-					...responseOptions.headers
-				},
-				trailers: {
-					...this[kDefaultTrailers],
-					...responseOptions.trailers
-				}
-			};
-		}
-		validateReplyParameters(replyParameters) {
-			if (typeof replyParameters.statusCode === "undefined") throw new InvalidArgumentError("statusCode must be defined");
-			if (typeof replyParameters.responseOptions !== "object" || replyParameters.responseOptions === null) throw new InvalidArgumentError("responseOptions must be an object");
-		}
-		/**
-		* Mock an undici request with a defined reply.
-		*/
-		reply(replyOptionsCallbackOrStatusCode) {
-			if (typeof replyOptionsCallbackOrStatusCode === "function") {
-				const wrappedDefaultsCallback = (opts) => {
-					const resolvedData = replyOptionsCallbackOrStatusCode(opts);
-					if (typeof resolvedData !== "object" || resolvedData === null) throw new InvalidArgumentError("reply options callback must return an object");
-					const replyParameters = {
-						data: "",
-						responseOptions: {},
-						...resolvedData
-					};
-					this.validateReplyParameters(replyParameters);
-					return { ...this.createMockScopeDispatchData(replyParameters) };
-				};
-				return new MockScope(addMockDispatch(this[kDispatches], this[kDispatchKey], wrappedDefaultsCallback));
-			}
-			const replyParameters = {
-				statusCode: replyOptionsCallbackOrStatusCode,
-				data: arguments[1] === void 0 ? "" : arguments[1],
-				responseOptions: arguments[2] === void 0 ? {} : arguments[2]
-			};
-			this.validateReplyParameters(replyParameters);
-			const dispatchData = this.createMockScopeDispatchData(replyParameters);
-			return new MockScope(addMockDispatch(this[kDispatches], this[kDispatchKey], dispatchData));
-		}
-		/**
-		* Mock an undici request with a defined error.
-		*/
-		replyWithError(error) {
-			if (typeof error === "undefined") throw new InvalidArgumentError("error must be defined");
-			return new MockScope(addMockDispatch(this[kDispatches], this[kDispatchKey], { error }));
-		}
-		/**
-		* Set default reply headers on the interceptor for subsequent replies
-		*/
-		defaultReplyHeaders(headers) {
-			if (typeof headers === "undefined") throw new InvalidArgumentError("headers must be defined");
-			this[kDefaultHeaders] = headers;
-			return this;
-		}
-		/**
-		* Set default reply trailers on the interceptor for subsequent replies
-		*/
-		defaultReplyTrailers(trailers) {
-			if (typeof trailers === "undefined") throw new InvalidArgumentError("trailers must be defined");
-			this[kDefaultTrailers] = trailers;
-			return this;
-		}
-		/**
-		* Set reply content length header for replies on the interceptor
-		*/
-		replyContentLength() {
-			this[kContentLength] = true;
-			return this;
-		}
-	};
-	module.exports.MockInterceptor = MockInterceptor;
-	module.exports.MockScope = MockScope;
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/mock/mock-client.js
-var require_mock_client = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { promisify: promisify$2 } = require("node:util");
-	var Client = require_client();
-	var { buildMockDispatch } = require_mock_utils();
-	var { kDispatches, kMockAgent, kClose, kOriginalClose, kOrigin, kOriginalDispatch, kConnected } = require_mock_symbols();
-	var { MockInterceptor } = require_mock_interceptor();
-	var Symbols = require_symbols$4();
-	var { InvalidArgumentError } = require_errors();
-	/**
-	* MockClient provides an API that extends the Client to influence the mockDispatches.
-	*/
-	var MockClient = class extends Client {
-		constructor(origin, opts) {
-			super(origin, opts);
-			if (!opts || !opts.agent || typeof opts.agent.dispatch !== "function") throw new InvalidArgumentError("Argument opts.agent must implement Agent");
-			this[kMockAgent] = opts.agent;
-			this[kOrigin] = origin;
-			this[kDispatches] = [];
-			this[kConnected] = 1;
-			this[kOriginalDispatch] = this.dispatch;
-			this[kOriginalClose] = this.close.bind(this);
-			this.dispatch = buildMockDispatch.call(this);
-			this.close = this[kClose];
-		}
-		get [Symbols.kConnected]() {
-			return this[kConnected];
-		}
-		/**
-		* Sets up the base interceptor for mocking replies from undici.
-		*/
-		intercept(opts) {
-			return new MockInterceptor(opts, this[kDispatches]);
-		}
-		async [kClose]() {
-			await promisify$2(this[kOriginalClose])();
-			this[kConnected] = 0;
-			this[kMockAgent][Symbols.kClients].delete(this[kOrigin]);
-		}
-	};
-	module.exports = MockClient;
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/mock/mock-pool.js
-var require_mock_pool = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { promisify: promisify$1 } = require("node:util");
-	var Pool = require_pool();
-	var { buildMockDispatch } = require_mock_utils();
-	var { kDispatches, kMockAgent, kClose, kOriginalClose, kOrigin, kOriginalDispatch, kConnected } = require_mock_symbols();
-	var { MockInterceptor } = require_mock_interceptor();
-	var Symbols = require_symbols$4();
-	var { InvalidArgumentError } = require_errors();
-	/**
-	* MockPool provides an API that extends the Pool to influence the mockDispatches.
-	*/
-	var MockPool = class extends Pool {
-		constructor(origin, opts) {
-			super(origin, opts);
-			if (!opts || !opts.agent || typeof opts.agent.dispatch !== "function") throw new InvalidArgumentError("Argument opts.agent must implement Agent");
-			this[kMockAgent] = opts.agent;
-			this[kOrigin] = origin;
-			this[kDispatches] = [];
-			this[kConnected] = 1;
-			this[kOriginalDispatch] = this.dispatch;
-			this[kOriginalClose] = this.close.bind(this);
-			this.dispatch = buildMockDispatch.call(this);
-			this.close = this[kClose];
-		}
-		get [Symbols.kConnected]() {
-			return this[kConnected];
-		}
-		/**
-		* Sets up the base interceptor for mocking replies from undici.
-		*/
-		intercept(opts) {
-			return new MockInterceptor(opts, this[kDispatches]);
-		}
-		async [kClose]() {
-			await promisify$1(this[kOriginalClose])();
-			this[kConnected] = 0;
-			this[kMockAgent][Symbols.kClients].delete(this[kOrigin]);
-		}
-	};
-	module.exports = MockPool;
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/mock/pluralizer.js
-var require_pluralizer = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var singulars = {
-		pronoun: "it",
-		is: "is",
-		was: "was",
-		this: "this"
-	};
-	var plurals = {
-		pronoun: "they",
-		is: "are",
-		was: "were",
-		this: "these"
-	};
-	module.exports = class Pluralizer {
-		constructor(singular, plural) {
-			this.singular = singular;
-			this.plural = plural;
-		}
-		pluralize(count) {
-			const one = count === 1;
-			const keys = one ? singulars : plurals;
-			const noun = one ? this.singular : this.plural;
-			return {
-				...keys,
-				count,
-				noun
-			};
-		}
-	};
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/mock/pending-interceptors-formatter.js
-var require_pending_interceptors_formatter = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { Transform: Transform$1 } = require("node:stream");
-	var { Console } = require("node:console");
-	var PERSISTENT = process.versions.icu ? "✅" : "Y ";
-	var NOT_PERSISTENT = process.versions.icu ? "❌" : "N ";
-	/**
-	* Gets the output of `console.table(…)` as a string.
-	*/
-	module.exports = class PendingInterceptorsFormatter {
-		constructor({ disableColors } = {}) {
-			this.transform = new Transform$1({ transform(chunk, _enc, cb) {
-				cb(null, chunk);
-			} });
-			this.logger = new Console({
-				stdout: this.transform,
-				inspectOptions: { colors: !disableColors && !process.env.CI }
-			});
-		}
-		format(pendingInterceptors) {
-			const withPrettyHeaders = pendingInterceptors.map(({ method, path, data: { statusCode }, persist, times, timesInvoked, origin }) => ({
-				Method: method,
-				Origin: origin,
-				Path: path,
-				"Status code": statusCode,
-				Persistent: persist ? PERSISTENT : NOT_PERSISTENT,
-				Invocations: timesInvoked,
-				Remaining: persist ? Infinity : times - timesInvoked
-			}));
-			this.logger.table(withPrettyHeaders);
-			return this.transform.read().toString();
-		}
-	};
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/mock/mock-agent.js
-var require_mock_agent = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { kClients } = require_symbols$4();
-	var Agent = require_agent();
-	var { kAgent, kMockAgentSet, kMockAgentGet, kDispatches, kIsMockActive, kNetConnect, kGetNetConnect, kOptions, kFactory } = require_mock_symbols();
-	var MockClient = require_mock_client();
-	var MockPool = require_mock_pool();
-	var { matchValue, buildMockOptions } = require_mock_utils();
-	var { InvalidArgumentError, UndiciError } = require_errors();
-	var Dispatcher = require_dispatcher();
-	var Pluralizer = require_pluralizer();
-	var PendingInterceptorsFormatter = require_pending_interceptors_formatter();
-	var MockAgent = class extends Dispatcher {
-		constructor(opts) {
-			super(opts);
-			this[kNetConnect] = true;
-			this[kIsMockActive] = true;
-			if (opts?.agent && typeof opts.agent.dispatch !== "function") throw new InvalidArgumentError("Argument opts.agent must implement Agent");
-			const agent = opts?.agent ? opts.agent : new Agent(opts);
-			this[kAgent] = agent;
-			this[kClients] = agent[kClients];
-			this[kOptions] = buildMockOptions(opts);
-		}
-		get(origin) {
-			let dispatcher = this[kMockAgentGet](origin);
-			if (!dispatcher) {
-				dispatcher = this[kFactory](origin);
-				this[kMockAgentSet](origin, dispatcher);
-			}
-			return dispatcher;
-		}
-		dispatch(opts, handler) {
-			this.get(opts.origin);
-			return this[kAgent].dispatch(opts, handler);
-		}
-		async close() {
-			await this[kAgent].close();
-			this[kClients].clear();
-		}
-		deactivate() {
-			this[kIsMockActive] = false;
-		}
-		activate() {
-			this[kIsMockActive] = true;
-		}
-		enableNetConnect(matcher) {
-			if (typeof matcher === "string" || typeof matcher === "function" || matcher instanceof RegExp) if (Array.isArray(this[kNetConnect])) this[kNetConnect].push(matcher);
-			else this[kNetConnect] = [matcher];
-			else if (typeof matcher === "undefined") this[kNetConnect] = true;
-			else throw new InvalidArgumentError("Unsupported matcher. Must be one of String|Function|RegExp.");
-		}
-		disableNetConnect() {
-			this[kNetConnect] = false;
-		}
-		get isMockActive() {
-			return this[kIsMockActive];
-		}
-		[kMockAgentSet](origin, dispatcher) {
-			this[kClients].set(origin, dispatcher);
-		}
-		[kFactory](origin) {
-			const mockOptions = Object.assign({ agent: this }, this[kOptions]);
-			return this[kOptions] && this[kOptions].connections === 1 ? new MockClient(origin, mockOptions) : new MockPool(origin, mockOptions);
-		}
-		[kMockAgentGet](origin) {
-			const client = this[kClients].get(origin);
-			if (client) return client;
-			if (typeof origin !== "string") {
-				const dispatcher = this[kFactory]("http://localhost:9999");
-				this[kMockAgentSet](origin, dispatcher);
-				return dispatcher;
-			}
-			for (const [keyMatcher, nonExplicitDispatcher] of Array.from(this[kClients])) if (nonExplicitDispatcher && typeof keyMatcher !== "string" && matchValue(keyMatcher, origin)) {
-				const dispatcher = this[kFactory](origin);
-				this[kMockAgentSet](origin, dispatcher);
-				dispatcher[kDispatches] = nonExplicitDispatcher[kDispatches];
-				return dispatcher;
-			}
-		}
-		[kGetNetConnect]() {
-			return this[kNetConnect];
-		}
-		pendingInterceptors() {
-			const mockAgentClients = this[kClients];
-			return Array.from(mockAgentClients.entries()).flatMap(([origin, scope]) => scope[kDispatches].map((dispatch) => ({
-				...dispatch,
-				origin
-			}))).filter(({ pending }) => pending);
-		}
-		assertNoPendingInterceptors({ pendingInterceptorsFormatter = new PendingInterceptorsFormatter() } = {}) {
-			const pending = this.pendingInterceptors();
-			if (pending.length === 0) return;
-			const pluralizer = new Pluralizer("interceptor", "interceptors").pluralize(pending.length);
-			throw new UndiciError(`
-${pluralizer.count} ${pluralizer.noun} ${pluralizer.is} pending:
-
-${pendingInterceptorsFormatter.format(pending)}
-`.trim());
-		}
-	};
-	module.exports = MockAgent;
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/global.js
-var require_global = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var globalDispatcher = Symbol.for("undici.globalDispatcher.1");
-	var { InvalidArgumentError } = require_errors();
-	var Agent = require_agent();
-	if (getGlobalDispatcher() === void 0) setGlobalDispatcher(new Agent());
-	function setGlobalDispatcher(agent) {
-		if (!agent || typeof agent.dispatch !== "function") throw new InvalidArgumentError("Argument agent must implement Agent");
-		Object.defineProperty(globalThis, globalDispatcher, {
-			value: agent,
-			writable: true,
-			enumerable: false,
-			configurable: false
-		});
-	}
-	function getGlobalDispatcher() {
-		return globalThis[globalDispatcher];
-	}
-	module.exports = {
-		setGlobalDispatcher,
-		getGlobalDispatcher
-	};
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/handler/decorator-handler.js
-var require_decorator_handler = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	module.exports = class DecoratorHandler {
-		#handler;
-		constructor(handler) {
-			if (typeof handler !== "object" || handler === null) throw new TypeError("handler must be an object");
-			this.#handler = handler;
-		}
-		onConnect(...args) {
-			return this.#handler.onConnect?.(...args);
-		}
-		onError(...args) {
-			return this.#handler.onError?.(...args);
-		}
-		onUpgrade(...args) {
-			return this.#handler.onUpgrade?.(...args);
-		}
-		onResponseStarted(...args) {
-			return this.#handler.onResponseStarted?.(...args);
-		}
-		onHeaders(...args) {
-			return this.#handler.onHeaders?.(...args);
-		}
-		onData(...args) {
-			return this.#handler.onData?.(...args);
-		}
-		onComplete(...args) {
-			return this.#handler.onComplete?.(...args);
-		}
-		onBodySent(...args) {
-			return this.#handler.onBodySent?.(...args);
-		}
-	};
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/interceptor/redirect.js
-var require_redirect = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var RedirectHandler = require_redirect_handler();
-	module.exports = (opts) => {
-		const globalMaxRedirections = opts?.maxRedirections;
-		return (dispatch) => {
-			return function redirectInterceptor(opts, handler) {
-				const { maxRedirections = globalMaxRedirections, ...baseOpts } = opts;
-				if (!maxRedirections) return dispatch(opts, handler);
-				return dispatch(baseOpts, new RedirectHandler(dispatch, maxRedirections, opts, handler));
-			};
-		};
-	};
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/interceptor/retry.js
-var require_retry = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var RetryHandler = require_retry_handler();
-	module.exports = (globalOpts) => {
-		return (dispatch) => {
-			return function retryInterceptor(opts, handler) {
-				return dispatch(opts, new RetryHandler({
-					...opts,
-					retryOptions: {
-						...globalOpts,
-						...opts.retryOptions
-					}
-				}, {
-					handler,
-					dispatch
-				}));
-			};
-		};
-	};
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/interceptor/dump.js
-var require_dump = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var util = require_util$7();
-	var { InvalidArgumentError, RequestAbortedError } = require_errors();
-	var DecoratorHandler = require_decorator_handler();
-	var DumpHandler = class extends DecoratorHandler {
-		#maxSize = 1024 * 1024;
-		#abort = null;
-		#dumped = false;
-		#aborted = false;
-		#size = 0;
-		#reason = null;
-		#handler = null;
-		constructor({ maxSize }, handler) {
-			super(handler);
-			if (maxSize != null && (!Number.isFinite(maxSize) || maxSize < 1)) throw new InvalidArgumentError("maxSize must be a number greater than 0");
-			this.#maxSize = maxSize ?? this.#maxSize;
-			this.#handler = handler;
-		}
-		onConnect(abort) {
-			this.#abort = abort;
-			this.#handler.onConnect(this.#customAbort.bind(this));
-		}
-		#customAbort(reason) {
-			this.#aborted = true;
-			this.#reason = reason;
-		}
-		onHeaders(statusCode, rawHeaders, resume, statusMessage) {
-			const contentLength = util.parseHeaders(rawHeaders)["content-length"];
-			if (contentLength != null && contentLength > this.#maxSize) throw new RequestAbortedError(`Response size (${contentLength}) larger than maxSize (${this.#maxSize})`);
-			if (this.#aborted) return true;
-			return this.#handler.onHeaders(statusCode, rawHeaders, resume, statusMessage);
-		}
-		onError(err) {
-			if (this.#dumped) return;
-			err = this.#reason ?? err;
-			this.#handler.onError(err);
-		}
-		onData(chunk) {
-			this.#size = this.#size + chunk.length;
-			if (this.#size >= this.#maxSize) {
-				this.#dumped = true;
-				if (this.#aborted) this.#handler.onError(this.#reason);
-				else this.#handler.onComplete([]);
-			}
-			return true;
-		}
-		onComplete(trailers) {
-			if (this.#dumped) return;
-			if (this.#aborted) {
-				this.#handler.onError(this.reason);
-				return;
-			}
-			this.#handler.onComplete(trailers);
-		}
-	};
-	function createDumpInterceptor({ maxSize: defaultMaxSize } = { maxSize: 1024 * 1024 }) {
-		return (dispatch) => {
-			return function Intercept(opts, handler) {
-				const { dumpMaxSize = defaultMaxSize } = opts;
-				return dispatch(opts, new DumpHandler({ maxSize: dumpMaxSize }, handler));
-			};
-		};
-	}
-	module.exports = createDumpInterceptor;
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/interceptor/dns.js
-var require_dns = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { isIP } = require("node:net");
-	var { lookup } = require("node:dns");
-	var DecoratorHandler = require_decorator_handler();
-	var { InvalidArgumentError, InformationalError } = require_errors();
-	var maxInt = Math.pow(2, 31) - 1;
-	var DNSInstance = class {
-		#maxTTL = 0;
-		#maxItems = 0;
-		#records = /* @__PURE__ */ new Map();
-		dualStack = true;
-		affinity = null;
-		lookup = null;
-		pick = null;
-		constructor(opts) {
-			this.#maxTTL = opts.maxTTL;
-			this.#maxItems = opts.maxItems;
-			this.dualStack = opts.dualStack;
-			this.affinity = opts.affinity;
-			this.lookup = opts.lookup ?? this.#defaultLookup;
-			this.pick = opts.pick ?? this.#defaultPick;
-		}
-		get full() {
-			return this.#records.size === this.#maxItems;
-		}
-		runLookup(origin, opts, cb) {
-			const ips = this.#records.get(origin.hostname);
-			if (ips == null && this.full) {
-				cb(null, origin.origin);
-				return;
-			}
-			const newOpts = {
-				affinity: this.affinity,
-				dualStack: this.dualStack,
-				lookup: this.lookup,
-				pick: this.pick,
-				...opts.dns,
-				maxTTL: this.#maxTTL,
-				maxItems: this.#maxItems
-			};
-			if (ips == null) this.lookup(origin, newOpts, (err, addresses) => {
-				if (err || addresses == null || addresses.length === 0) {
-					cb(err ?? new InformationalError("No DNS entries found"));
-					return;
-				}
-				this.setRecords(origin, addresses);
-				const records = this.#records.get(origin.hostname);
-				const ip = this.pick(origin, records, newOpts.affinity);
-				let port;
-				if (typeof ip.port === "number") port = `:${ip.port}`;
-				else if (origin.port !== "") port = `:${origin.port}`;
-				else port = "";
-				cb(null, `${origin.protocol}//${ip.family === 6 ? `[${ip.address}]` : ip.address}${port}`);
-			});
-			else {
-				const ip = this.pick(origin, ips, newOpts.affinity);
-				if (ip == null) {
-					this.#records.delete(origin.hostname);
-					this.runLookup(origin, opts, cb);
-					return;
-				}
-				let port;
-				if (typeof ip.port === "number") port = `:${ip.port}`;
-				else if (origin.port !== "") port = `:${origin.port}`;
-				else port = "";
-				cb(null, `${origin.protocol}//${ip.family === 6 ? `[${ip.address}]` : ip.address}${port}`);
-			}
-		}
-		#defaultLookup(origin, opts, cb) {
-			lookup(origin.hostname, {
-				all: true,
-				family: this.dualStack === false ? this.affinity : 0,
-				order: "ipv4first"
-			}, (err, addresses) => {
-				if (err) return cb(err);
-				const results = /* @__PURE__ */ new Map();
-				for (const addr of addresses) results.set(`${addr.address}:${addr.family}`, addr);
-				cb(null, results.values());
-			});
-		}
-		#defaultPick(origin, hostnameRecords, affinity) {
-			let ip = null;
-			const { records, offset } = hostnameRecords;
-			let family;
-			if (this.dualStack) {
-				if (affinity == null) if (offset == null || offset === maxInt) {
-					hostnameRecords.offset = 0;
-					affinity = 4;
-				} else {
-					hostnameRecords.offset++;
-					affinity = (hostnameRecords.offset & 1) === 1 ? 6 : 4;
-				}
-				if (records[affinity] != null && records[affinity].ips.length > 0) family = records[affinity];
-				else family = records[affinity === 4 ? 6 : 4];
-			} else family = records[affinity];
-			if (family == null || family.ips.length === 0) return ip;
-			if (family.offset == null || family.offset === maxInt) family.offset = 0;
-			else family.offset++;
-			const position = family.offset % family.ips.length;
-			ip = family.ips[position] ?? null;
-			if (ip == null) return ip;
-			if (Date.now() - ip.timestamp > ip.ttl) {
-				family.ips.splice(position, 1);
-				return this.pick(origin, hostnameRecords, affinity);
-			}
-			return ip;
-		}
-		setRecords(origin, addresses) {
-			const timestamp = Date.now();
-			const records = { records: {
-				4: null,
-				6: null
-			} };
-			for (const record of addresses) {
-				record.timestamp = timestamp;
-				if (typeof record.ttl === "number") record.ttl = Math.min(record.ttl, this.#maxTTL);
-				else record.ttl = this.#maxTTL;
-				const familyRecords = records.records[record.family] ?? { ips: [] };
-				familyRecords.ips.push(record);
-				records.records[record.family] = familyRecords;
-			}
-			this.#records.set(origin.hostname, records);
-		}
-		getHandler(meta, opts) {
-			return new DNSDispatchHandler(this, meta, opts);
-		}
-	};
-	var DNSDispatchHandler = class extends DecoratorHandler {
-		#state = null;
-		#opts = null;
-		#dispatch = null;
-		#handler = null;
-		#origin = null;
-		constructor(state, { origin, handler, dispatch }, opts) {
-			super(handler);
-			this.#origin = origin;
-			this.#handler = handler;
-			this.#opts = { ...opts };
-			this.#state = state;
-			this.#dispatch = dispatch;
-		}
-		onError(err) {
-			switch (err.code) {
-				case "ETIMEDOUT":
-				case "ECONNREFUSED":
-					if (this.#state.dualStack) {
-						this.#state.runLookup(this.#origin, this.#opts, (err, newOrigin) => {
-							if (err) return this.#handler.onError(err);
-							const dispatchOpts = {
-								...this.#opts,
-								origin: newOrigin
-							};
-							this.#dispatch(dispatchOpts, this);
-						});
-						return;
-					}
-					this.#handler.onError(err);
-					return;
-				case "ENOTFOUND": this.#state.deleteRecord(this.#origin);
-				default:
-					this.#handler.onError(err);
-					break;
-			}
-		}
-	};
-	module.exports = (interceptorOpts) => {
-		if (interceptorOpts?.maxTTL != null && (typeof interceptorOpts?.maxTTL !== "number" || interceptorOpts?.maxTTL < 0)) throw new InvalidArgumentError("Invalid maxTTL. Must be a positive number");
-		if (interceptorOpts?.maxItems != null && (typeof interceptorOpts?.maxItems !== "number" || interceptorOpts?.maxItems < 1)) throw new InvalidArgumentError("Invalid maxItems. Must be a positive number and greater than zero");
-		if (interceptorOpts?.affinity != null && interceptorOpts?.affinity !== 4 && interceptorOpts?.affinity !== 6) throw new InvalidArgumentError("Invalid affinity. Must be either 4 or 6");
-		if (interceptorOpts?.dualStack != null && typeof interceptorOpts?.dualStack !== "boolean") throw new InvalidArgumentError("Invalid dualStack. Must be a boolean");
-		if (interceptorOpts?.lookup != null && typeof interceptorOpts?.lookup !== "function") throw new InvalidArgumentError("Invalid lookup. Must be a function");
-		if (interceptorOpts?.pick != null && typeof interceptorOpts?.pick !== "function") throw new InvalidArgumentError("Invalid pick. Must be a function");
-		const dualStack = interceptorOpts?.dualStack ?? true;
-		let affinity;
-		if (dualStack) affinity = interceptorOpts?.affinity ?? null;
-		else affinity = interceptorOpts?.affinity ?? 4;
-		const instance = new DNSInstance({
-			maxTTL: interceptorOpts?.maxTTL ?? 1e4,
-			lookup: interceptorOpts?.lookup ?? null,
-			pick: interceptorOpts?.pick ?? null,
-			dualStack,
-			affinity,
-			maxItems: interceptorOpts?.maxItems ?? Infinity
-		});
-		return (dispatch) => {
-			return function dnsInterceptor(origDispatchOpts, handler) {
-				const origin = origDispatchOpts.origin.constructor === URL ? origDispatchOpts.origin : new URL(origDispatchOpts.origin);
-				if (isIP(origin.hostname) !== 0) return dispatch(origDispatchOpts, handler);
-				instance.runLookup(origin, origDispatchOpts, (err, newOrigin) => {
-					if (err) return handler.onError(err);
-					let dispatchOpts = null;
-					dispatchOpts = {
-						...origDispatchOpts,
-						servername: origin.hostname,
-						origin: newOrigin,
-						headers: {
-							host: origin.hostname,
-							...origDispatchOpts.headers
-						}
-					};
-					dispatch(dispatchOpts, instance.getHandler({
-						origin,
-						dispatch,
-						handler
-					}, origDispatchOpts));
-				});
-				return true;
-			};
-		};
-	};
-}));
-//#endregion
 //#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/fetch/headers.js
 var require_headers = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { kConstruct } = require_symbols$4();
-	var { kEnumerableProperty } = require_util$7();
-	var { iteratorMixin, isValidHeaderName, isValidHeaderValue } = require_util$6();
+	var { kConstruct } = require_symbols$1();
+	var { kEnumerableProperty } = require_util$1();
+	var { iteratorMixin, isValidHeaderName, isValidHeaderValue } = require_util();
 	var { webidl } = require_webidl();
-	var assert$8 = require("node:assert");
+	var assert$4 = require("node:assert");
 	var util = require("node:util");
 	var kHeadersMap = Symbol("headers map");
 	var kHeadersSortedMap = Symbol("headers map sorted");
@@ -10113,11 +7663,11 @@ var require_headers = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 				const iterator = this[kHeadersMap][Symbol.iterator]();
 				const firstValue = iterator.next().value;
 				array[0] = [firstValue[0], firstValue[1].value];
-				assert$8(firstValue[1].value !== null);
+				assert$4(firstValue[1].value !== null);
 				for (let i = 1, j = 0, right = 0, left = 0, pivot = 0, x, value; i < size; ++i) {
 					value = iterator.next().value;
 					x = array[i] = [value[0], value[1].value];
-					assert$8(x[1] !== null);
+					assert$4(x[1] !== null);
 					left = 0;
 					right = i;
 					while (left < right) {
@@ -10138,7 +7688,7 @@ var require_headers = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 				let i = 0;
 				for (const { 0: name, 1: { value } } of this[kHeadersMap]) {
 					array[i++] = [name, value];
-					assert$8(value !== null);
+					assert$4(value !== null);
 				}
 				return array.sort(compareHeaderName);
 			}
@@ -10308,18 +7858,18 @@ var require_headers = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 var require_response = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	var { Headers, HeadersList, fill, getHeadersGuard, setHeadersGuard, setHeadersList } = require_headers();
 	var { extractBody, cloneBody, mixinBody, hasFinalizationRegistry, streamRegistry, bodyUnusable } = require_body();
-	var util = require_util$7();
+	var util = require_util$1();
 	var nodeUtil$1 = require("node:util");
 	var { kEnumerableProperty } = util;
-	var { isValidReasonPhrase, isCancelled, isAborted, isBlobLike, serializeJavascriptValueToJSONString, isErrorLike, isomorphicEncode, environmentSettingsObject: relevantRealm } = require_util$6();
-	var { redirectStatusSet, nullBodyStatus } = require_constants$3();
-	var { kState, kHeaders } = require_symbols$3();
+	var { isValidReasonPhrase, isCancelled, isAborted, isBlobLike, serializeJavascriptValueToJSONString, isErrorLike, isomorphicEncode, environmentSettingsObject: relevantRealm } = require_util();
+	var { redirectStatusSet, nullBodyStatus } = require_constants$1();
+	var { kState, kHeaders } = require_symbols();
 	var { webidl } = require_webidl();
 	var { FormData } = require_formdata();
 	var { URLSerializer } = require_data_url();
-	var { kConstruct } = require_symbols$4();
-	var assert$7 = require("node:assert");
-	var { types: types$2 } = require("node:util");
+	var { kConstruct } = require_symbols$1();
+	var assert$3 = require("node:assert");
+	var { types } = require("node:util");
 	var textEncoder = new TextEncoder("utf-8");
 	var Response = class Response {
 		static error() {
@@ -10506,7 +8056,7 @@ var require_response = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 				return p in state ? state[p] : target[p];
 			},
 			set(target, p, value) {
-				assert$7(!(p in state));
+				assert$3(!(p in state));
 				target[p] = value;
 				return true;
 			}
@@ -10535,10 +8085,10 @@ var require_response = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 			headersList: [],
 			body: null
 		});
-		else assert$7(false);
+		else assert$3(false);
 	}
 	function makeAppropriateNetworkError(fetchParams, err = null) {
-		assert$7(isCancelled(fetchParams));
+		assert$3(isCancelled(fetchParams));
 		return isAborted(fetchParams) ? makeNetworkError(Object.assign(new DOMException("The operation was aborted.", "AbortError"), { cause: err })) : makeNetworkError(Object.assign(new DOMException("Request was cancelled."), { cause: err }));
 	}
 	function initializeResponse(response, init, body) {
@@ -10579,7 +8129,7 @@ var require_response = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	webidl.converters.XMLHttpRequestBodyInit = function(V, prefix, name) {
 		if (typeof V === "string") return webidl.converters.USVString(V, prefix, name);
 		if (isBlobLike(V)) return webidl.converters.Blob(V, prefix, name, { strict: false });
-		if (ArrayBuffer.isView(V) || types$2.isArrayBuffer(V)) return webidl.converters.BufferSource(V, prefix, name);
+		if (ArrayBuffer.isView(V) || types.isArrayBuffer(V)) return webidl.converters.BufferSource(V, prefix, name);
 		if (util.isFormDataLike(V)) return webidl.converters.FormData(V, prefix, name, { strict: false });
 		if (V instanceof URLSearchParams) return webidl.converters.URLSearchParams(V, prefix, name);
 		return webidl.converters.DOMString(V, prefix, name);
@@ -10619,7 +8169,7 @@ var require_response = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 //#endregion
 //#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/fetch/dispatcher-weakref.js
 var require_dispatcher_weakref = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { kConnected, kSize } = require_symbols$4();
+	var { kConnected, kSize } = require_symbols$1();
 	var CompatWeakRef = class {
 		constructor(value) {
 			this.value = value;
@@ -10659,16 +8209,16 @@ var require_request = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	var { extractBody, mixinBody, cloneBody, bodyUnusable } = require_body();
 	var { Headers, fill: fillHeaders, HeadersList, setHeadersGuard, getHeadersGuard, setHeadersList, getHeadersList } = require_headers();
 	var { FinalizationRegistry } = require_dispatcher_weakref()();
-	var util = require_util$7();
+	var util = require_util$1();
 	var nodeUtil = require("node:util");
-	var { isValidHTTPToken, sameOrigin, environmentSettingsObject } = require_util$6();
-	var { forbiddenMethodsSet, corsSafeListedMethodsSet, referrerPolicy, requestRedirect, requestMode, requestCredentials, requestCache, requestDuplex } = require_constants$3();
+	var { isValidHTTPToken, sameOrigin, environmentSettingsObject } = require_util();
+	var { forbiddenMethodsSet, corsSafeListedMethodsSet, referrerPolicy, requestRedirect, requestMode, requestCredentials, requestCache, requestDuplex } = require_constants$1();
 	var { kEnumerableProperty, normalizedMethodRecordsBase, normalizedMethodRecords } = util;
-	var { kHeaders, kSignal, kState, kDispatcher } = require_symbols$3();
+	var { kHeaders, kSignal, kState, kDispatcher } = require_symbols();
 	var { webidl } = require_webidl();
 	var { URLSerializer } = require_data_url();
-	var { kConstruct } = require_symbols$4();
-	var assert$6 = require("node:assert");
+	var { kConstruct } = require_symbols$1();
+	var assert$2 = require("node:assert");
 	var { getMaxListeners, setMaxListeners, getEventListeners, defaultMaxListeners } = require("node:events");
 	var kAbortController = Symbol("abortController");
 	var requestFinalizer = new FinalizationRegistry(({ signal, abort }) => {
@@ -10723,7 +8273,7 @@ var require_request = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 				fallbackMode = "cors";
 			} else {
 				this[kDispatcher] = init.dispatcher || input[kDispatcher];
-				assert$6(input instanceof Request);
+				assert$2(input instanceof Request);
 				request = input[kState];
 				signal = input[kSignal];
 			}
@@ -11163,20 +8713,44 @@ var require_request = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	};
 }));
 //#endregion
+//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/global.js
+var require_global = /* @__PURE__ */ __commonJSMin(((exports, module) => {
+	var globalDispatcher = Symbol.for("undici.globalDispatcher.1");
+	var { InvalidArgumentError } = require_errors();
+	var Agent = require_agent();
+	if (getGlobalDispatcher() === void 0) setGlobalDispatcher(new Agent());
+	function setGlobalDispatcher(agent) {
+		if (!agent || typeof agent.dispatch !== "function") throw new InvalidArgumentError("Argument agent must implement Agent");
+		Object.defineProperty(globalThis, globalDispatcher, {
+			value: agent,
+			writable: true,
+			enumerable: false,
+			configurable: false
+		});
+	}
+	function getGlobalDispatcher() {
+		return globalThis[globalDispatcher];
+	}
+	module.exports = {
+		setGlobalDispatcher,
+		getGlobalDispatcher
+	};
+}));
+//#endregion
 //#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/fetch/index.js
 var require_fetch = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	var { makeNetworkError, makeAppropriateNetworkError, filterResponse, makeResponse, fromInnerResponse } = require_response();
 	var { HeadersList } = require_headers();
 	var { Request, cloneRequest } = require_request();
 	var zlib = require("node:zlib");
-	var { bytesMatch, makePolicyContainer, clonePolicyContainer, requestBadPort, TAOCheck, appendRequestOriginHeader, responseLocationURL, requestCurrentURL, setRequestReferrerPolicyOnRedirect, tryUpgradeRequestToAPotentiallyTrustworthyURL, createOpaqueTimingInfo, appendFetchMetadata, corsCheck, crossOriginResourcePolicyCheck, determineRequestsReferrer, coarsenedSharedCurrentTime, createDeferredPromise, isBlobLike, sameOrigin, isCancelled, isAborted, isErrorLike, fullyReadBody, readableStreamClose, isomorphicEncode, urlIsLocal, urlIsHttpHttpsScheme, urlHasHttpsScheme, clampAndCoarsenConnectionTimingInfo, simpleRangeHeaderValue, buildContentRange, createInflate, extractMimeType } = require_util$6();
-	var { kState, kDispatcher } = require_symbols$3();
-	var assert$5 = require("node:assert");
+	var { bytesMatch, makePolicyContainer, clonePolicyContainer, requestBadPort, TAOCheck, appendRequestOriginHeader, responseLocationURL, requestCurrentURL, setRequestReferrerPolicyOnRedirect, tryUpgradeRequestToAPotentiallyTrustworthyURL, createOpaqueTimingInfo, appendFetchMetadata, corsCheck, crossOriginResourcePolicyCheck, determineRequestsReferrer, coarsenedSharedCurrentTime, createDeferredPromise, isBlobLike, sameOrigin, isCancelled, isAborted, isErrorLike, fullyReadBody, readableStreamClose, isomorphicEncode, urlIsLocal, urlIsHttpHttpsScheme, urlHasHttpsScheme, clampAndCoarsenConnectionTimingInfo, simpleRangeHeaderValue, buildContentRange, createInflate, extractMimeType } = require_util();
+	var { kState, kDispatcher } = require_symbols();
+	var assert$1 = require("node:assert");
 	var { safelyExtractBody, extractBody } = require_body();
-	var { redirectStatusSet, nullBodyStatus, safeMethodsSet, requestBodyHeader, subresourceSet } = require_constants$3();
+	var { redirectStatusSet, nullBodyStatus, safeMethodsSet, requestBodyHeader, subresourceSet } = require_constants$1();
 	var EE = require("node:events");
-	var { Readable, pipeline: pipeline$1, finished } = require("node:stream");
-	var { addAbortListener, isErrored, isReadable, bufferToLowerCasedHeaderName } = require_util$7();
+	var { Readable, pipeline, finished } = require("node:stream");
+	var { addAbortListener, isErrored, isReadable, bufferToLowerCasedHeaderName } = require_util$1();
 	var { dataURLProcessor, serializeAMimeType, minimizeSupportedMimeType } = require_data_url();
 	var { getGlobalDispatcher } = require_global();
 	var { webidl } = require_webidl();
@@ -11232,7 +8806,7 @@ var require_fetch = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		let controller = null;
 		addAbortListener(requestObject.signal, () => {
 			locallyAborted = true;
-			assert$5(controller != null);
+			assert$1(controller != null);
 			controller.abort(requestObject.signal.reason);
 			const realResponse = responseObject?.deref();
 			abortFetch(p, request, realResponse, requestObject.signal.reason);
@@ -11290,7 +8864,7 @@ var require_fetch = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		});
 	}
 	function fetching({ request, processRequestBodyChunkLength, processRequestEndOfBody, processResponse, processResponseEndOfBody, processResponseConsumeBody, useParallelQueue = false, dispatcher = getGlobalDispatcher() }) {
-		assert$5(dispatcher);
+		assert$1(dispatcher);
 		let taskDestination = null;
 		let crossOriginIsolatedCapability = false;
 		if (request.client != null) {
@@ -11310,7 +8884,7 @@ var require_fetch = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 			taskDestination,
 			crossOriginIsolatedCapability
 		};
-		assert$5(!request.body || request.body.stream);
+		assert$1(!request.body || request.body.stream);
 		if (request.window === "client") request.window = request.client?.globalObject?.constructor?.name === "Window" ? request.client : "no-window";
 		if (request.origin === "client") request.origin = request.client.origin;
 		if (request.policyContainer === "client") if (request.client != null) request.policyContainer = clonePolicyContainer(request.client.policyContainer);
@@ -11354,7 +8928,7 @@ var require_fetch = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 			if (request.responseTainting === "basic") response = filterResponse(response, "basic");
 			else if (request.responseTainting === "cors") response = filterResponse(response, "cors");
 			else if (request.responseTainting === "opaque") response = filterResponse(response, "opaque");
-			else assert$5(false);
+			else assert$1(false);
 		}
 		let internalResponse = response.status === 0 ? response : response.internalResponse;
 		if (internalResponse.urlList.length === 0) internalResponse.urlList.push(...request.urlList);
@@ -11507,7 +9081,7 @@ var require_fetch = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 			if (request.redirect === "error") response = makeNetworkError("unexpected redirect");
 			else if (request.redirect === "manual") response = actualResponse;
 			else if (request.redirect === "follow") response = await httpRedirectFetch(fetchParams, response);
-			else assert$5(false);
+			else assert$1(false);
 		}
 		response.timingInfo = timingInfo;
 		return response;
@@ -11540,7 +9114,7 @@ var require_fetch = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 			request.headersList.delete("host", true);
 		}
 		if (request.body != null) {
-			assert$5(request.body.source != null);
+			assert$1(request.body.source != null);
 			request.body = safelyExtractBody(request.body.source)[0];
 		}
 		const timingInfo = fetchParams.timingInfo;
@@ -11610,7 +9184,7 @@ var require_fetch = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 		return response;
 	}
 	async function httpNetworkFetch(fetchParams, includeCredentials = false, forceNewConnection = false) {
-		assert$5(!fetchParams.controller.connection || fetchParams.controller.connection.destroyed);
+		assert$1(!fetchParams.controller.connection || fetchParams.controller.connection.destroyed);
 		fetchParams.controller.connection = {
 			abort: null,
 			destroyed: false,
@@ -11814,7 +9388,7 @@ var require_fetch = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 						status,
 						statusText,
 						headersList,
-						body: decoders.length ? pipeline$1(this.body, ...decoders, (err) => {
+						body: decoders.length ? pipeline(this.body, ...decoders, (err) => {
 							if (err) this.onError(err);
 						}).on("error", onError) : this.body.on("error", onError)
 					});
@@ -11861,3959 +9435,18 @@ var require_fetch = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 	};
 }));
 //#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/fileapi/symbols.js
-var require_symbols$2 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	module.exports = {
-		kState: Symbol("FileReader state"),
-		kResult: Symbol("FileReader result"),
-		kError: Symbol("FileReader error"),
-		kLastProgressEventFired: Symbol("FileReader last progress event fired timestamp"),
-		kEvents: Symbol("FileReader events"),
-		kAborted: Symbol("FileReader aborted")
-	};
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/fileapi/progressevent.js
-var require_progressevent = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { webidl } = require_webidl();
-	var kState = Symbol("ProgressEvent state");
-	/**
-	* @see https://xhr.spec.whatwg.org/#progressevent
-	*/
-	var ProgressEvent = class ProgressEvent extends Event {
-		constructor(type, eventInitDict = {}) {
-			type = webidl.converters.DOMString(type, "ProgressEvent constructor", "type");
-			eventInitDict = webidl.converters.ProgressEventInit(eventInitDict ?? {});
-			super(type, eventInitDict);
-			this[kState] = {
-				lengthComputable: eventInitDict.lengthComputable,
-				loaded: eventInitDict.loaded,
-				total: eventInitDict.total
-			};
-		}
-		get lengthComputable() {
-			webidl.brandCheck(this, ProgressEvent);
-			return this[kState].lengthComputable;
-		}
-		get loaded() {
-			webidl.brandCheck(this, ProgressEvent);
-			return this[kState].loaded;
-		}
-		get total() {
-			webidl.brandCheck(this, ProgressEvent);
-			return this[kState].total;
-		}
-	};
-	webidl.converters.ProgressEventInit = webidl.dictionaryConverter([
-		{
-			key: "lengthComputable",
-			converter: webidl.converters.boolean,
-			defaultValue: () => false
-		},
-		{
-			key: "loaded",
-			converter: webidl.converters["unsigned long long"],
-			defaultValue: () => 0
-		},
-		{
-			key: "total",
-			converter: webidl.converters["unsigned long long"],
-			defaultValue: () => 0
-		},
-		{
-			key: "bubbles",
-			converter: webidl.converters.boolean,
-			defaultValue: () => false
-		},
-		{
-			key: "cancelable",
-			converter: webidl.converters.boolean,
-			defaultValue: () => false
-		},
-		{
-			key: "composed",
-			converter: webidl.converters.boolean,
-			defaultValue: () => false
-		}
-	]);
-	module.exports = { ProgressEvent };
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/fileapi/encoding.js
-var require_encoding = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	/**
-	* @see https://encoding.spec.whatwg.org/#concept-encoding-get
-	* @param {string|undefined} label
-	*/
-	function getEncoding(label) {
-		if (!label) return "failure";
-		switch (label.trim().toLowerCase()) {
-			case "unicode-1-1-utf-8":
-			case "unicode11utf8":
-			case "unicode20utf8":
-			case "utf-8":
-			case "utf8":
-			case "x-unicode20utf8": return "UTF-8";
-			case "866":
-			case "cp866":
-			case "csibm866":
-			case "ibm866": return "IBM866";
-			case "csisolatin2":
-			case "iso-8859-2":
-			case "iso-ir-101":
-			case "iso8859-2":
-			case "iso88592":
-			case "iso_8859-2":
-			case "iso_8859-2:1987":
-			case "l2":
-			case "latin2": return "ISO-8859-2";
-			case "csisolatin3":
-			case "iso-8859-3":
-			case "iso-ir-109":
-			case "iso8859-3":
-			case "iso88593":
-			case "iso_8859-3":
-			case "iso_8859-3:1988":
-			case "l3":
-			case "latin3": return "ISO-8859-3";
-			case "csisolatin4":
-			case "iso-8859-4":
-			case "iso-ir-110":
-			case "iso8859-4":
-			case "iso88594":
-			case "iso_8859-4":
-			case "iso_8859-4:1988":
-			case "l4":
-			case "latin4": return "ISO-8859-4";
-			case "csisolatincyrillic":
-			case "cyrillic":
-			case "iso-8859-5":
-			case "iso-ir-144":
-			case "iso8859-5":
-			case "iso88595":
-			case "iso_8859-5":
-			case "iso_8859-5:1988": return "ISO-8859-5";
-			case "arabic":
-			case "asmo-708":
-			case "csiso88596e":
-			case "csiso88596i":
-			case "csisolatinarabic":
-			case "ecma-114":
-			case "iso-8859-6":
-			case "iso-8859-6-e":
-			case "iso-8859-6-i":
-			case "iso-ir-127":
-			case "iso8859-6":
-			case "iso88596":
-			case "iso_8859-6":
-			case "iso_8859-6:1987": return "ISO-8859-6";
-			case "csisolatingreek":
-			case "ecma-118":
-			case "elot_928":
-			case "greek":
-			case "greek8":
-			case "iso-8859-7":
-			case "iso-ir-126":
-			case "iso8859-7":
-			case "iso88597":
-			case "iso_8859-7":
-			case "iso_8859-7:1987":
-			case "sun_eu_greek": return "ISO-8859-7";
-			case "csiso88598e":
-			case "csisolatinhebrew":
-			case "hebrew":
-			case "iso-8859-8":
-			case "iso-8859-8-e":
-			case "iso-ir-138":
-			case "iso8859-8":
-			case "iso88598":
-			case "iso_8859-8":
-			case "iso_8859-8:1988":
-			case "visual": return "ISO-8859-8";
-			case "csiso88598i":
-			case "iso-8859-8-i":
-			case "logical": return "ISO-8859-8-I";
-			case "csisolatin6":
-			case "iso-8859-10":
-			case "iso-ir-157":
-			case "iso8859-10":
-			case "iso885910":
-			case "l6":
-			case "latin6": return "ISO-8859-10";
-			case "iso-8859-13":
-			case "iso8859-13":
-			case "iso885913": return "ISO-8859-13";
-			case "iso-8859-14":
-			case "iso8859-14":
-			case "iso885914": return "ISO-8859-14";
-			case "csisolatin9":
-			case "iso-8859-15":
-			case "iso8859-15":
-			case "iso885915":
-			case "iso_8859-15":
-			case "l9": return "ISO-8859-15";
-			case "iso-8859-16": return "ISO-8859-16";
-			case "cskoi8r":
-			case "koi":
-			case "koi8":
-			case "koi8-r":
-			case "koi8_r": return "KOI8-R";
-			case "koi8-ru":
-			case "koi8-u": return "KOI8-U";
-			case "csmacintosh":
-			case "mac":
-			case "macintosh":
-			case "x-mac-roman": return "macintosh";
-			case "iso-8859-11":
-			case "iso8859-11":
-			case "iso885911":
-			case "tis-620":
-			case "windows-874": return "windows-874";
-			case "cp1250":
-			case "windows-1250":
-			case "x-cp1250": return "windows-1250";
-			case "cp1251":
-			case "windows-1251":
-			case "x-cp1251": return "windows-1251";
-			case "ansi_x3.4-1968":
-			case "ascii":
-			case "cp1252":
-			case "cp819":
-			case "csisolatin1":
-			case "ibm819":
-			case "iso-8859-1":
-			case "iso-ir-100":
-			case "iso8859-1":
-			case "iso88591":
-			case "iso_8859-1":
-			case "iso_8859-1:1987":
-			case "l1":
-			case "latin1":
-			case "us-ascii":
-			case "windows-1252":
-			case "x-cp1252": return "windows-1252";
-			case "cp1253":
-			case "windows-1253":
-			case "x-cp1253": return "windows-1253";
-			case "cp1254":
-			case "csisolatin5":
-			case "iso-8859-9":
-			case "iso-ir-148":
-			case "iso8859-9":
-			case "iso88599":
-			case "iso_8859-9":
-			case "iso_8859-9:1989":
-			case "l5":
-			case "latin5":
-			case "windows-1254":
-			case "x-cp1254": return "windows-1254";
-			case "cp1255":
-			case "windows-1255":
-			case "x-cp1255": return "windows-1255";
-			case "cp1256":
-			case "windows-1256":
-			case "x-cp1256": return "windows-1256";
-			case "cp1257":
-			case "windows-1257":
-			case "x-cp1257": return "windows-1257";
-			case "cp1258":
-			case "windows-1258":
-			case "x-cp1258": return "windows-1258";
-			case "x-mac-cyrillic":
-			case "x-mac-ukrainian": return "x-mac-cyrillic";
-			case "chinese":
-			case "csgb2312":
-			case "csiso58gb231280":
-			case "gb2312":
-			case "gb_2312":
-			case "gb_2312-80":
-			case "gbk":
-			case "iso-ir-58":
-			case "x-gbk": return "GBK";
-			case "gb18030": return "gb18030";
-			case "big5":
-			case "big5-hkscs":
-			case "cn-big5":
-			case "csbig5":
-			case "x-x-big5": return "Big5";
-			case "cseucpkdfmtjapanese":
-			case "euc-jp":
-			case "x-euc-jp": return "EUC-JP";
-			case "csiso2022jp":
-			case "iso-2022-jp": return "ISO-2022-JP";
-			case "csshiftjis":
-			case "ms932":
-			case "ms_kanji":
-			case "shift-jis":
-			case "shift_jis":
-			case "sjis":
-			case "windows-31j":
-			case "x-sjis": return "Shift_JIS";
-			case "cseuckr":
-			case "csksc56011987":
-			case "euc-kr":
-			case "iso-ir-149":
-			case "korean":
-			case "ks_c_5601-1987":
-			case "ks_c_5601-1989":
-			case "ksc5601":
-			case "ksc_5601":
-			case "windows-949": return "EUC-KR";
-			case "csiso2022kr":
-			case "hz-gb-2312":
-			case "iso-2022-cn":
-			case "iso-2022-cn-ext":
-			case "iso-2022-kr":
-			case "replacement": return "replacement";
-			case "unicodefffe":
-			case "utf-16be": return "UTF-16BE";
-			case "csunicode":
-			case "iso-10646-ucs-2":
-			case "ucs-2":
-			case "unicode":
-			case "unicodefeff":
-			case "utf-16":
-			case "utf-16le": return "UTF-16LE";
-			case "x-user-defined": return "x-user-defined";
-			default: return "failure";
-		}
-	}
-	module.exports = { getEncoding };
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/fileapi/util.js
-var require_util$4 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { kState, kError, kResult, kAborted, kLastProgressEventFired } = require_symbols$2();
-	var { ProgressEvent } = require_progressevent();
-	var { getEncoding } = require_encoding();
-	var { serializeAMimeType, parseMIMEType } = require_data_url();
-	var { types: types$1 } = require("node:util");
-	var { StringDecoder: StringDecoder$1 } = require("string_decoder");
-	var { btoa } = require("node:buffer");
-	/** @type {PropertyDescriptor} */
-	var staticPropertyDescriptors = {
-		enumerable: true,
-		writable: false,
-		configurable: false
-	};
-	/**
-	* @see https://w3c.github.io/FileAPI/#readOperation
-	* @param {import('./filereader').FileReader} fr
-	* @param {import('buffer').Blob} blob
-	* @param {string} type
-	* @param {string?} encodingName
-	*/
-	function readOperation(fr, blob, type, encodingName) {
-		if (fr[kState] === "loading") throw new DOMException("Invalid state", "InvalidStateError");
-		fr[kState] = "loading";
-		fr[kResult] = null;
-		fr[kError] = null;
-		const reader = blob.stream().getReader();
-		/** @type {Uint8Array[]} */
-		const bytes = [];
-		let chunkPromise = reader.read();
-		let isFirstChunk = true;
-		(async () => {
-			while (!fr[kAborted]) try {
-				const { done, value } = await chunkPromise;
-				if (isFirstChunk && !fr[kAborted]) queueMicrotask(() => {
-					fireAProgressEvent("loadstart", fr);
-				});
-				isFirstChunk = false;
-				if (!done && types$1.isUint8Array(value)) {
-					bytes.push(value);
-					if ((fr[kLastProgressEventFired] === void 0 || Date.now() - fr[kLastProgressEventFired] >= 50) && !fr[kAborted]) {
-						fr[kLastProgressEventFired] = Date.now();
-						queueMicrotask(() => {
-							fireAProgressEvent("progress", fr);
-						});
-					}
-					chunkPromise = reader.read();
-				} else if (done) {
-					queueMicrotask(() => {
-						fr[kState] = "done";
-						try {
-							const result = packageData(bytes, type, blob.type, encodingName);
-							if (fr[kAborted]) return;
-							fr[kResult] = result;
-							fireAProgressEvent("load", fr);
-						} catch (error) {
-							fr[kError] = error;
-							fireAProgressEvent("error", fr);
-						}
-						if (fr[kState] !== "loading") fireAProgressEvent("loadend", fr);
-					});
-					break;
-				}
-			} catch (error) {
-				if (fr[kAborted]) return;
-				queueMicrotask(() => {
-					fr[kState] = "done";
-					fr[kError] = error;
-					fireAProgressEvent("error", fr);
-					if (fr[kState] !== "loading") fireAProgressEvent("loadend", fr);
-				});
-				break;
-			}
-		})();
-	}
-	/**
-	* @see https://w3c.github.io/FileAPI/#fire-a-progress-event
-	* @see https://dom.spec.whatwg.org/#concept-event-fire
-	* @param {string} e The name of the event
-	* @param {import('./filereader').FileReader} reader
-	*/
-	function fireAProgressEvent(e, reader) {
-		const event = new ProgressEvent(e, {
-			bubbles: false,
-			cancelable: false
-		});
-		reader.dispatchEvent(event);
-	}
-	/**
-	* @see https://w3c.github.io/FileAPI/#blob-package-data
-	* @param {Uint8Array[]} bytes
-	* @param {string} type
-	* @param {string?} mimeType
-	* @param {string?} encodingName
-	*/
-	function packageData(bytes, type, mimeType, encodingName) {
-		switch (type) {
-			case "DataURL": {
-				let dataURL = "data:";
-				const parsed = parseMIMEType(mimeType || "application/octet-stream");
-				if (parsed !== "failure") dataURL += serializeAMimeType(parsed);
-				dataURL += ";base64,";
-				const decoder = new StringDecoder$1("latin1");
-				for (const chunk of bytes) dataURL += btoa(decoder.write(chunk));
-				dataURL += btoa(decoder.end());
-				return dataURL;
-			}
-			case "Text": {
-				let encoding = "failure";
-				if (encodingName) encoding = getEncoding(encodingName);
-				if (encoding === "failure" && mimeType) {
-					const type = parseMIMEType(mimeType);
-					if (type !== "failure") encoding = getEncoding(type.parameters.get("charset"));
-				}
-				if (encoding === "failure") encoding = "UTF-8";
-				return decode(bytes, encoding);
-			}
-			case "ArrayBuffer": return combineByteSequences(bytes).buffer;
-			case "BinaryString": {
-				let binaryString = "";
-				const decoder = new StringDecoder$1("latin1");
-				for (const chunk of bytes) binaryString += decoder.write(chunk);
-				binaryString += decoder.end();
-				return binaryString;
-			}
-		}
-	}
-	/**
-	* @see https://encoding.spec.whatwg.org/#decode
-	* @param {Uint8Array[]} ioQueue
-	* @param {string} encoding
-	*/
-	function decode(ioQueue, encoding) {
-		const bytes = combineByteSequences(ioQueue);
-		const BOMEncoding = BOMSniffing(bytes);
-		let slice = 0;
-		if (BOMEncoding !== null) {
-			encoding = BOMEncoding;
-			slice = BOMEncoding === "UTF-8" ? 3 : 2;
-		}
-		const sliced = bytes.slice(slice);
-		return new TextDecoder(encoding).decode(sliced);
-	}
-	/**
-	* @see https://encoding.spec.whatwg.org/#bom-sniff
-	* @param {Uint8Array} ioQueue
-	*/
-	function BOMSniffing(ioQueue) {
-		const [a, b, c] = ioQueue;
-		if (a === 239 && b === 187 && c === 191) return "UTF-8";
-		else if (a === 254 && b === 255) return "UTF-16BE";
-		else if (a === 255 && b === 254) return "UTF-16LE";
-		return null;
-	}
-	/**
-	* @param {Uint8Array[]} sequences
-	*/
-	function combineByteSequences(sequences) {
-		const size = sequences.reduce((a, b) => {
-			return a + b.byteLength;
-		}, 0);
-		let offset = 0;
-		return sequences.reduce((a, b) => {
-			a.set(b, offset);
-			offset += b.byteLength;
-			return a;
-		}, new Uint8Array(size));
-	}
-	module.exports = {
-		staticPropertyDescriptors,
-		readOperation,
-		fireAProgressEvent
-	};
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/fileapi/filereader.js
-var require_filereader = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { staticPropertyDescriptors, readOperation, fireAProgressEvent } = require_util$4();
-	var { kState, kError, kResult, kEvents, kAborted } = require_symbols$2();
-	var { webidl } = require_webidl();
-	var { kEnumerableProperty } = require_util$7();
-	var FileReader = class FileReader extends EventTarget {
-		constructor() {
-			super();
-			this[kState] = "empty";
-			this[kResult] = null;
-			this[kError] = null;
-			this[kEvents] = {
-				loadend: null,
-				error: null,
-				abort: null,
-				load: null,
-				progress: null,
-				loadstart: null
-			};
-		}
-		/**
-		* @see https://w3c.github.io/FileAPI/#dfn-readAsArrayBuffer
-		* @param {import('buffer').Blob} blob
-		*/
-		readAsArrayBuffer(blob) {
-			webidl.brandCheck(this, FileReader);
-			webidl.argumentLengthCheck(arguments, 1, "FileReader.readAsArrayBuffer");
-			blob = webidl.converters.Blob(blob, { strict: false });
-			readOperation(this, blob, "ArrayBuffer");
-		}
-		/**
-		* @see https://w3c.github.io/FileAPI/#readAsBinaryString
-		* @param {import('buffer').Blob} blob
-		*/
-		readAsBinaryString(blob) {
-			webidl.brandCheck(this, FileReader);
-			webidl.argumentLengthCheck(arguments, 1, "FileReader.readAsBinaryString");
-			blob = webidl.converters.Blob(blob, { strict: false });
-			readOperation(this, blob, "BinaryString");
-		}
-		/**
-		* @see https://w3c.github.io/FileAPI/#readAsDataText
-		* @param {import('buffer').Blob} blob
-		* @param {string?} encoding
-		*/
-		readAsText(blob, encoding = void 0) {
-			webidl.brandCheck(this, FileReader);
-			webidl.argumentLengthCheck(arguments, 1, "FileReader.readAsText");
-			blob = webidl.converters.Blob(blob, { strict: false });
-			if (encoding !== void 0) encoding = webidl.converters.DOMString(encoding, "FileReader.readAsText", "encoding");
-			readOperation(this, blob, "Text", encoding);
-		}
-		/**
-		* @see https://w3c.github.io/FileAPI/#dfn-readAsDataURL
-		* @param {import('buffer').Blob} blob
-		*/
-		readAsDataURL(blob) {
-			webidl.brandCheck(this, FileReader);
-			webidl.argumentLengthCheck(arguments, 1, "FileReader.readAsDataURL");
-			blob = webidl.converters.Blob(blob, { strict: false });
-			readOperation(this, blob, "DataURL");
-		}
-		/**
-		* @see https://w3c.github.io/FileAPI/#dfn-abort
-		*/
-		abort() {
-			if (this[kState] === "empty" || this[kState] === "done") {
-				this[kResult] = null;
-				return;
-			}
-			if (this[kState] === "loading") {
-				this[kState] = "done";
-				this[kResult] = null;
-			}
-			this[kAborted] = true;
-			fireAProgressEvent("abort", this);
-			if (this[kState] !== "loading") fireAProgressEvent("loadend", this);
-		}
-		/**
-		* @see https://w3c.github.io/FileAPI/#dom-filereader-readystate
-		*/
-		get readyState() {
-			webidl.brandCheck(this, FileReader);
-			switch (this[kState]) {
-				case "empty": return this.EMPTY;
-				case "loading": return this.LOADING;
-				case "done": return this.DONE;
-			}
-		}
-		/**
-		* @see https://w3c.github.io/FileAPI/#dom-filereader-result
-		*/
-		get result() {
-			webidl.brandCheck(this, FileReader);
-			return this[kResult];
-		}
-		/**
-		* @see https://w3c.github.io/FileAPI/#dom-filereader-error
-		*/
-		get error() {
-			webidl.brandCheck(this, FileReader);
-			return this[kError];
-		}
-		get onloadend() {
-			webidl.brandCheck(this, FileReader);
-			return this[kEvents].loadend;
-		}
-		set onloadend(fn) {
-			webidl.brandCheck(this, FileReader);
-			if (this[kEvents].loadend) this.removeEventListener("loadend", this[kEvents].loadend);
-			if (typeof fn === "function") {
-				this[kEvents].loadend = fn;
-				this.addEventListener("loadend", fn);
-			} else this[kEvents].loadend = null;
-		}
-		get onerror() {
-			webidl.brandCheck(this, FileReader);
-			return this[kEvents].error;
-		}
-		set onerror(fn) {
-			webidl.brandCheck(this, FileReader);
-			if (this[kEvents].error) this.removeEventListener("error", this[kEvents].error);
-			if (typeof fn === "function") {
-				this[kEvents].error = fn;
-				this.addEventListener("error", fn);
-			} else this[kEvents].error = null;
-		}
-		get onloadstart() {
-			webidl.brandCheck(this, FileReader);
-			return this[kEvents].loadstart;
-		}
-		set onloadstart(fn) {
-			webidl.brandCheck(this, FileReader);
-			if (this[kEvents].loadstart) this.removeEventListener("loadstart", this[kEvents].loadstart);
-			if (typeof fn === "function") {
-				this[kEvents].loadstart = fn;
-				this.addEventListener("loadstart", fn);
-			} else this[kEvents].loadstart = null;
-		}
-		get onprogress() {
-			webidl.brandCheck(this, FileReader);
-			return this[kEvents].progress;
-		}
-		set onprogress(fn) {
-			webidl.brandCheck(this, FileReader);
-			if (this[kEvents].progress) this.removeEventListener("progress", this[kEvents].progress);
-			if (typeof fn === "function") {
-				this[kEvents].progress = fn;
-				this.addEventListener("progress", fn);
-			} else this[kEvents].progress = null;
-		}
-		get onload() {
-			webidl.brandCheck(this, FileReader);
-			return this[kEvents].load;
-		}
-		set onload(fn) {
-			webidl.brandCheck(this, FileReader);
-			if (this[kEvents].load) this.removeEventListener("load", this[kEvents].load);
-			if (typeof fn === "function") {
-				this[kEvents].load = fn;
-				this.addEventListener("load", fn);
-			} else this[kEvents].load = null;
-		}
-		get onabort() {
-			webidl.brandCheck(this, FileReader);
-			return this[kEvents].abort;
-		}
-		set onabort(fn) {
-			webidl.brandCheck(this, FileReader);
-			if (this[kEvents].abort) this.removeEventListener("abort", this[kEvents].abort);
-			if (typeof fn === "function") {
-				this[kEvents].abort = fn;
-				this.addEventListener("abort", fn);
-			} else this[kEvents].abort = null;
-		}
-	};
-	FileReader.EMPTY = FileReader.prototype.EMPTY = 0;
-	FileReader.LOADING = FileReader.prototype.LOADING = 1;
-	FileReader.DONE = FileReader.prototype.DONE = 2;
-	Object.defineProperties(FileReader.prototype, {
-		EMPTY: staticPropertyDescriptors,
-		LOADING: staticPropertyDescriptors,
-		DONE: staticPropertyDescriptors,
-		readAsArrayBuffer: kEnumerableProperty,
-		readAsBinaryString: kEnumerableProperty,
-		readAsText: kEnumerableProperty,
-		readAsDataURL: kEnumerableProperty,
-		abort: kEnumerableProperty,
-		readyState: kEnumerableProperty,
-		result: kEnumerableProperty,
-		error: kEnumerableProperty,
-		onloadstart: kEnumerableProperty,
-		onprogress: kEnumerableProperty,
-		onload: kEnumerableProperty,
-		onabort: kEnumerableProperty,
-		onerror: kEnumerableProperty,
-		onloadend: kEnumerableProperty,
-		[Symbol.toStringTag]: {
-			value: "FileReader",
-			writable: false,
-			enumerable: false,
-			configurable: true
-		}
-	});
-	Object.defineProperties(FileReader, {
-		EMPTY: staticPropertyDescriptors,
-		LOADING: staticPropertyDescriptors,
-		DONE: staticPropertyDescriptors
-	});
-	module.exports = { FileReader };
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/cache/symbols.js
-var require_symbols$1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	module.exports = { kConstruct: require_symbols$4().kConstruct };
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/cache/util.js
-var require_util$3 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var assert$4 = require("node:assert");
-	var { URLSerializer } = require_data_url();
-	var { isValidHeaderName } = require_util$6();
-	/**
-	* @see https://url.spec.whatwg.org/#concept-url-equals
-	* @param {URL} A
-	* @param {URL} B
-	* @param {boolean | undefined} excludeFragment
-	* @returns {boolean}
-	*/
-	function urlEquals(A, B, excludeFragment = false) {
-		return URLSerializer(A, excludeFragment) === URLSerializer(B, excludeFragment);
-	}
-	/**
-	* @see https://github.com/chromium/chromium/blob/694d20d134cb553d8d89e5500b9148012b1ba299/content/browser/cache_storage/cache_storage_cache.cc#L260-L262
-	* @param {string} header
-	*/
-	function getFieldValues(header) {
-		assert$4(header !== null);
-		const values = [];
-		for (let value of header.split(",")) {
-			value = value.trim();
-			if (isValidHeaderName(value)) values.push(value);
-		}
-		return values;
-	}
-	module.exports = {
-		urlEquals,
-		getFieldValues
-	};
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/cache/cache.js
-var require_cache = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { kConstruct } = require_symbols$1();
-	var { urlEquals, getFieldValues } = require_util$3();
-	var { kEnumerableProperty, isDisturbed } = require_util$7();
-	var { webidl } = require_webidl();
-	var { Response, cloneResponse, fromInnerResponse } = require_response();
-	var { Request, fromInnerRequest } = require_request();
-	var { kState } = require_symbols$3();
-	var { fetching } = require_fetch();
-	var { urlIsHttpHttpsScheme, createDeferredPromise, readAllBytes } = require_util$6();
-	var assert$3 = require("node:assert");
-	/**
-	* @see https://w3c.github.io/ServiceWorker/#dfn-cache-batch-operation
-	* @typedef {Object} CacheBatchOperation
-	* @property {'delete' | 'put'} type
-	* @property {any} request
-	* @property {any} response
-	* @property {import('../../types/cache').CacheQueryOptions} options
-	*/
-	/**
-	* @see https://w3c.github.io/ServiceWorker/#dfn-request-response-list
-	* @typedef {[any, any][]} requestResponseList
-	*/
-	var Cache = class Cache {
-		/**
-		* @see https://w3c.github.io/ServiceWorker/#dfn-relevant-request-response-list
-		* @type {requestResponseList}
-		*/
-		#relevantRequestResponseList;
-		constructor() {
-			if (arguments[0] !== kConstruct) webidl.illegalConstructor();
-			webidl.util.markAsUncloneable(this);
-			this.#relevantRequestResponseList = arguments[1];
-		}
-		async match(request, options = {}) {
-			webidl.brandCheck(this, Cache);
-			const prefix = "Cache.match";
-			webidl.argumentLengthCheck(arguments, 1, prefix);
-			request = webidl.converters.RequestInfo(request, prefix, "request");
-			options = webidl.converters.CacheQueryOptions(options, prefix, "options");
-			const p = this.#internalMatchAll(request, options, 1);
-			if (p.length === 0) return;
-			return p[0];
-		}
-		async matchAll(request = void 0, options = {}) {
-			webidl.brandCheck(this, Cache);
-			const prefix = "Cache.matchAll";
-			if (request !== void 0) request = webidl.converters.RequestInfo(request, prefix, "request");
-			options = webidl.converters.CacheQueryOptions(options, prefix, "options");
-			return this.#internalMatchAll(request, options);
-		}
-		async add(request) {
-			webidl.brandCheck(this, Cache);
-			const prefix = "Cache.add";
-			webidl.argumentLengthCheck(arguments, 1, prefix);
-			request = webidl.converters.RequestInfo(request, prefix, "request");
-			const requests = [request];
-			return await this.addAll(requests);
-		}
-		async addAll(requests) {
-			webidl.brandCheck(this, Cache);
-			const prefix = "Cache.addAll";
-			webidl.argumentLengthCheck(arguments, 1, prefix);
-			const responsePromises = [];
-			const requestList = [];
-			for (let request of requests) {
-				if (request === void 0) throw webidl.errors.conversionFailed({
-					prefix,
-					argument: "Argument 1",
-					types: ["undefined is not allowed"]
-				});
-				request = webidl.converters.RequestInfo(request);
-				if (typeof request === "string") continue;
-				const r = request[kState];
-				if (!urlIsHttpHttpsScheme(r.url) || r.method !== "GET") throw webidl.errors.exception({
-					header: prefix,
-					message: "Expected http/s scheme when method is not GET."
-				});
-			}
-			/** @type {ReturnType<typeof fetching>[]} */
-			const fetchControllers = [];
-			for (const request of requests) {
-				const r = new Request(request)[kState];
-				if (!urlIsHttpHttpsScheme(r.url)) throw webidl.errors.exception({
-					header: prefix,
-					message: "Expected http/s scheme."
-				});
-				r.initiator = "fetch";
-				r.destination = "subresource";
-				requestList.push(r);
-				const responsePromise = createDeferredPromise();
-				fetchControllers.push(fetching({
-					request: r,
-					processResponse(response) {
-						if (response.type === "error" || response.status === 206 || response.status < 200 || response.status > 299) responsePromise.reject(webidl.errors.exception({
-							header: "Cache.addAll",
-							message: "Received an invalid status code or the request failed."
-						}));
-						else if (response.headersList.contains("vary")) {
-							const fieldValues = getFieldValues(response.headersList.get("vary"));
-							for (const fieldValue of fieldValues) if (fieldValue === "*") {
-								responsePromise.reject(webidl.errors.exception({
-									header: "Cache.addAll",
-									message: "invalid vary field value"
-								}));
-								for (const controller of fetchControllers) controller.abort();
-								return;
-							}
-						}
-					},
-					processResponseEndOfBody(response) {
-						if (response.aborted) {
-							responsePromise.reject(new DOMException("aborted", "AbortError"));
-							return;
-						}
-						responsePromise.resolve(response);
-					}
-				}));
-				responsePromises.push(responsePromise.promise);
-			}
-			const responses = await Promise.all(responsePromises);
-			const operations = [];
-			let index = 0;
-			for (const response of responses) {
-				/** @type {CacheBatchOperation} */
-				const operation = {
-					type: "put",
-					request: requestList[index],
-					response
-				};
-				operations.push(operation);
-				index++;
-			}
-			const cacheJobPromise = createDeferredPromise();
-			let errorData = null;
-			try {
-				this.#batchCacheOperations(operations);
-			} catch (e) {
-				errorData = e;
-			}
-			queueMicrotask(() => {
-				if (errorData === null) cacheJobPromise.resolve(void 0);
-				else cacheJobPromise.reject(errorData);
-			});
-			return cacheJobPromise.promise;
-		}
-		async put(request, response) {
-			webidl.brandCheck(this, Cache);
-			const prefix = "Cache.put";
-			webidl.argumentLengthCheck(arguments, 2, prefix);
-			request = webidl.converters.RequestInfo(request, prefix, "request");
-			response = webidl.converters.Response(response, prefix, "response");
-			let innerRequest = null;
-			if (request instanceof Request) innerRequest = request[kState];
-			else innerRequest = new Request(request)[kState];
-			if (!urlIsHttpHttpsScheme(innerRequest.url) || innerRequest.method !== "GET") throw webidl.errors.exception({
-				header: prefix,
-				message: "Expected an http/s scheme when method is not GET"
-			});
-			const innerResponse = response[kState];
-			if (innerResponse.status === 206) throw webidl.errors.exception({
-				header: prefix,
-				message: "Got 206 status"
-			});
-			if (innerResponse.headersList.contains("vary")) {
-				const fieldValues = getFieldValues(innerResponse.headersList.get("vary"));
-				for (const fieldValue of fieldValues) if (fieldValue === "*") throw webidl.errors.exception({
-					header: prefix,
-					message: "Got * vary field value"
-				});
-			}
-			if (innerResponse.body && (isDisturbed(innerResponse.body.stream) || innerResponse.body.stream.locked)) throw webidl.errors.exception({
-				header: prefix,
-				message: "Response body is locked or disturbed"
-			});
-			const clonedResponse = cloneResponse(innerResponse);
-			const bodyReadPromise = createDeferredPromise();
-			if (innerResponse.body != null) readAllBytes(innerResponse.body.stream.getReader()).then(bodyReadPromise.resolve, bodyReadPromise.reject);
-			else bodyReadPromise.resolve(void 0);
-			/** @type {CacheBatchOperation[]} */
-			const operations = [];
-			/** @type {CacheBatchOperation} */
-			const operation = {
-				type: "put",
-				request: innerRequest,
-				response: clonedResponse
-			};
-			operations.push(operation);
-			const bytes = await bodyReadPromise.promise;
-			if (clonedResponse.body != null) clonedResponse.body.source = bytes;
-			const cacheJobPromise = createDeferredPromise();
-			let errorData = null;
-			try {
-				this.#batchCacheOperations(operations);
-			} catch (e) {
-				errorData = e;
-			}
-			queueMicrotask(() => {
-				if (errorData === null) cacheJobPromise.resolve();
-				else cacheJobPromise.reject(errorData);
-			});
-			return cacheJobPromise.promise;
-		}
-		async delete(request, options = {}) {
-			webidl.brandCheck(this, Cache);
-			const prefix = "Cache.delete";
-			webidl.argumentLengthCheck(arguments, 1, prefix);
-			request = webidl.converters.RequestInfo(request, prefix, "request");
-			options = webidl.converters.CacheQueryOptions(options, prefix, "options");
-			/**
-			* @type {Request}
-			*/
-			let r = null;
-			if (request instanceof Request) {
-				r = request[kState];
-				if (r.method !== "GET" && !options.ignoreMethod) return false;
-			} else {
-				assert$3(typeof request === "string");
-				r = new Request(request)[kState];
-			}
-			/** @type {CacheBatchOperation[]} */
-			const operations = [];
-			/** @type {CacheBatchOperation} */
-			const operation = {
-				type: "delete",
-				request: r,
-				options
-			};
-			operations.push(operation);
-			const cacheJobPromise = createDeferredPromise();
-			let errorData = null;
-			let requestResponses;
-			try {
-				requestResponses = this.#batchCacheOperations(operations);
-			} catch (e) {
-				errorData = e;
-			}
-			queueMicrotask(() => {
-				if (errorData === null) cacheJobPromise.resolve(!!requestResponses?.length);
-				else cacheJobPromise.reject(errorData);
-			});
-			return cacheJobPromise.promise;
-		}
-		/**
-		* @see https://w3c.github.io/ServiceWorker/#dom-cache-keys
-		* @param {any} request
-		* @param {import('../../types/cache').CacheQueryOptions} options
-		* @returns {Promise<readonly Request[]>}
-		*/
-		async keys(request = void 0, options = {}) {
-			webidl.brandCheck(this, Cache);
-			const prefix = "Cache.keys";
-			if (request !== void 0) request = webidl.converters.RequestInfo(request, prefix, "request");
-			options = webidl.converters.CacheQueryOptions(options, prefix, "options");
-			let r = null;
-			if (request !== void 0) {
-				if (request instanceof Request) {
-					r = request[kState];
-					if (r.method !== "GET" && !options.ignoreMethod) return [];
-				} else if (typeof request === "string") r = new Request(request)[kState];
-			}
-			const promise = createDeferredPromise();
-			const requests = [];
-			if (request === void 0) for (const requestResponse of this.#relevantRequestResponseList) requests.push(requestResponse[0]);
-			else {
-				const requestResponses = this.#queryCache(r, options);
-				for (const requestResponse of requestResponses) requests.push(requestResponse[0]);
-			}
-			queueMicrotask(() => {
-				const requestList = [];
-				for (const request of requests) {
-					const requestObject = fromInnerRequest(request, new AbortController().signal, "immutable");
-					requestList.push(requestObject);
-				}
-				promise.resolve(Object.freeze(requestList));
-			});
-			return promise.promise;
-		}
-		/**
-		* @see https://w3c.github.io/ServiceWorker/#batch-cache-operations-algorithm
-		* @param {CacheBatchOperation[]} operations
-		* @returns {requestResponseList}
-		*/
-		#batchCacheOperations(operations) {
-			const cache = this.#relevantRequestResponseList;
-			const backupCache = [...cache];
-			const addedItems = [];
-			const resultList = [];
-			try {
-				for (const operation of operations) {
-					if (operation.type !== "delete" && operation.type !== "put") throw webidl.errors.exception({
-						header: "Cache.#batchCacheOperations",
-						message: "operation type does not match \"delete\" or \"put\""
-					});
-					if (operation.type === "delete" && operation.response != null) throw webidl.errors.exception({
-						header: "Cache.#batchCacheOperations",
-						message: "delete operation should not have an associated response"
-					});
-					if (this.#queryCache(operation.request, operation.options, addedItems).length) throw new DOMException("???", "InvalidStateError");
-					let requestResponses;
-					if (operation.type === "delete") {
-						requestResponses = this.#queryCache(operation.request, operation.options);
-						if (requestResponses.length === 0) return [];
-						for (const requestResponse of requestResponses) {
-							const idx = cache.indexOf(requestResponse);
-							assert$3(idx !== -1);
-							cache.splice(idx, 1);
-						}
-					} else if (operation.type === "put") {
-						if (operation.response == null) throw webidl.errors.exception({
-							header: "Cache.#batchCacheOperations",
-							message: "put operation should have an associated response"
-						});
-						const r = operation.request;
-						if (!urlIsHttpHttpsScheme(r.url)) throw webidl.errors.exception({
-							header: "Cache.#batchCacheOperations",
-							message: "expected http or https scheme"
-						});
-						if (r.method !== "GET") throw webidl.errors.exception({
-							header: "Cache.#batchCacheOperations",
-							message: "not get method"
-						});
-						if (operation.options != null) throw webidl.errors.exception({
-							header: "Cache.#batchCacheOperations",
-							message: "options must not be defined"
-						});
-						requestResponses = this.#queryCache(operation.request);
-						for (const requestResponse of requestResponses) {
-							const idx = cache.indexOf(requestResponse);
-							assert$3(idx !== -1);
-							cache.splice(idx, 1);
-						}
-						cache.push([operation.request, operation.response]);
-						addedItems.push([operation.request, operation.response]);
-					}
-					resultList.push([operation.request, operation.response]);
-				}
-				return resultList;
-			} catch (e) {
-				this.#relevantRequestResponseList.length = 0;
-				this.#relevantRequestResponseList = backupCache;
-				throw e;
-			}
-		}
-		/**
-		* @see https://w3c.github.io/ServiceWorker/#query-cache
-		* @param {any} requestQuery
-		* @param {import('../../types/cache').CacheQueryOptions} options
-		* @param {requestResponseList} targetStorage
-		* @returns {requestResponseList}
-		*/
-		#queryCache(requestQuery, options, targetStorage) {
-			/** @type {requestResponseList} */
-			const resultList = [];
-			const storage = targetStorage ?? this.#relevantRequestResponseList;
-			for (const requestResponse of storage) {
-				const [cachedRequest, cachedResponse] = requestResponse;
-				if (this.#requestMatchesCachedItem(requestQuery, cachedRequest, cachedResponse, options)) resultList.push(requestResponse);
-			}
-			return resultList;
-		}
-		/**
-		* @see https://w3c.github.io/ServiceWorker/#request-matches-cached-item-algorithm
-		* @param {any} requestQuery
-		* @param {any} request
-		* @param {any | null} response
-		* @param {import('../../types/cache').CacheQueryOptions | undefined} options
-		* @returns {boolean}
-		*/
-		#requestMatchesCachedItem(requestQuery, request, response = null, options) {
-			const queryURL = new URL(requestQuery.url);
-			const cachedURL = new URL(request.url);
-			if (options?.ignoreSearch) {
-				cachedURL.search = "";
-				queryURL.search = "";
-			}
-			if (!urlEquals(queryURL, cachedURL, true)) return false;
-			if (response == null || options?.ignoreVary || !response.headersList.contains("vary")) return true;
-			const fieldValues = getFieldValues(response.headersList.get("vary"));
-			for (const fieldValue of fieldValues) {
-				if (fieldValue === "*") return false;
-				if (request.headersList.get(fieldValue) !== requestQuery.headersList.get(fieldValue)) return false;
-			}
-			return true;
-		}
-		#internalMatchAll(request, options, maxResponses = Infinity) {
-			let r = null;
-			if (request !== void 0) {
-				if (request instanceof Request) {
-					r = request[kState];
-					if (r.method !== "GET" && !options.ignoreMethod) return [];
-				} else if (typeof request === "string") r = new Request(request)[kState];
-			}
-			const responses = [];
-			if (request === void 0) for (const requestResponse of this.#relevantRequestResponseList) responses.push(requestResponse[1]);
-			else {
-				const requestResponses = this.#queryCache(r, options);
-				for (const requestResponse of requestResponses) responses.push(requestResponse[1]);
-			}
-			const responseList = [];
-			for (const response of responses) {
-				const responseObject = fromInnerResponse(response, "immutable");
-				responseList.push(responseObject.clone());
-				if (responseList.length >= maxResponses) break;
-			}
-			return Object.freeze(responseList);
-		}
-	};
-	Object.defineProperties(Cache.prototype, {
-		[Symbol.toStringTag]: {
-			value: "Cache",
-			configurable: true
-		},
-		match: kEnumerableProperty,
-		matchAll: kEnumerableProperty,
-		add: kEnumerableProperty,
-		addAll: kEnumerableProperty,
-		put: kEnumerableProperty,
-		delete: kEnumerableProperty,
-		keys: kEnumerableProperty
-	});
-	var cacheQueryOptionConverters = [
-		{
-			key: "ignoreSearch",
-			converter: webidl.converters.boolean,
-			defaultValue: () => false
-		},
-		{
-			key: "ignoreMethod",
-			converter: webidl.converters.boolean,
-			defaultValue: () => false
-		},
-		{
-			key: "ignoreVary",
-			converter: webidl.converters.boolean,
-			defaultValue: () => false
-		}
-	];
-	webidl.converters.CacheQueryOptions = webidl.dictionaryConverter(cacheQueryOptionConverters);
-	webidl.converters.MultiCacheQueryOptions = webidl.dictionaryConverter([...cacheQueryOptionConverters, {
-		key: "cacheName",
-		converter: webidl.converters.DOMString
-	}]);
-	webidl.converters.Response = webidl.interfaceConverter(Response);
-	webidl.converters["sequence<RequestInfo>"] = webidl.sequenceConverter(webidl.converters.RequestInfo);
-	module.exports = { Cache };
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/cache/cachestorage.js
-var require_cachestorage = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { kConstruct } = require_symbols$1();
-	var { Cache } = require_cache();
-	var { webidl } = require_webidl();
-	var { kEnumerableProperty } = require_util$7();
-	var CacheStorage = class CacheStorage {
-		/**
-		* @see https://w3c.github.io/ServiceWorker/#dfn-relevant-name-to-cache-map
-		* @type {Map<string, import('./cache').requestResponseList}
-		*/
-		#caches = /* @__PURE__ */ new Map();
-		constructor() {
-			if (arguments[0] !== kConstruct) webidl.illegalConstructor();
-			webidl.util.markAsUncloneable(this);
-		}
-		async match(request, options = {}) {
-			webidl.brandCheck(this, CacheStorage);
-			webidl.argumentLengthCheck(arguments, 1, "CacheStorage.match");
-			request = webidl.converters.RequestInfo(request);
-			options = webidl.converters.MultiCacheQueryOptions(options);
-			if (options.cacheName != null) {
-				if (this.#caches.has(options.cacheName)) return await new Cache(kConstruct, this.#caches.get(options.cacheName)).match(request, options);
-			} else for (const cacheList of this.#caches.values()) {
-				const response = await new Cache(kConstruct, cacheList).match(request, options);
-				if (response !== void 0) return response;
-			}
-		}
-		/**
-		* @see https://w3c.github.io/ServiceWorker/#cache-storage-has
-		* @param {string} cacheName
-		* @returns {Promise<boolean>}
-		*/
-		async has(cacheName) {
-			webidl.brandCheck(this, CacheStorage);
-			const prefix = "CacheStorage.has";
-			webidl.argumentLengthCheck(arguments, 1, prefix);
-			cacheName = webidl.converters.DOMString(cacheName, prefix, "cacheName");
-			return this.#caches.has(cacheName);
-		}
-		/**
-		* @see https://w3c.github.io/ServiceWorker/#dom-cachestorage-open
-		* @param {string} cacheName
-		* @returns {Promise<Cache>}
-		*/
-		async open(cacheName) {
-			webidl.brandCheck(this, CacheStorage);
-			const prefix = "CacheStorage.open";
-			webidl.argumentLengthCheck(arguments, 1, prefix);
-			cacheName = webidl.converters.DOMString(cacheName, prefix, "cacheName");
-			if (this.#caches.has(cacheName)) return new Cache(kConstruct, this.#caches.get(cacheName));
-			const cache = [];
-			this.#caches.set(cacheName, cache);
-			return new Cache(kConstruct, cache);
-		}
-		/**
-		* @see https://w3c.github.io/ServiceWorker/#cache-storage-delete
-		* @param {string} cacheName
-		* @returns {Promise<boolean>}
-		*/
-		async delete(cacheName) {
-			webidl.brandCheck(this, CacheStorage);
-			const prefix = "CacheStorage.delete";
-			webidl.argumentLengthCheck(arguments, 1, prefix);
-			cacheName = webidl.converters.DOMString(cacheName, prefix, "cacheName");
-			return this.#caches.delete(cacheName);
-		}
-		/**
-		* @see https://w3c.github.io/ServiceWorker/#cache-storage-keys
-		* @returns {Promise<string[]>}
-		*/
-		async keys() {
-			webidl.brandCheck(this, CacheStorage);
-			return [...this.#caches.keys()];
-		}
-	};
-	Object.defineProperties(CacheStorage.prototype, {
-		[Symbol.toStringTag]: {
-			value: "CacheStorage",
-			configurable: true
-		},
-		match: kEnumerableProperty,
-		has: kEnumerableProperty,
-		open: kEnumerableProperty,
-		delete: kEnumerableProperty,
-		keys: kEnumerableProperty
-	});
-	module.exports = { CacheStorage };
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/cookies/constants.js
-var require_constants$2 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	module.exports = {
-		maxAttributeValueSize: 1024,
-		maxNameValuePairSize: 4096
-	};
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/cookies/util.js
-var require_util$2 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	/**
-	* @param {string} value
-	* @returns {boolean}
-	*/
-	function isCTLExcludingHtab(value) {
-		for (let i = 0; i < value.length; ++i) {
-			const code = value.charCodeAt(i);
-			if (code >= 0 && code <= 8 || code >= 10 && code <= 31 || code === 127) return true;
-		}
-		return false;
-	}
-	/**
-	CHAR           = <any US-ASCII character (octets 0 - 127)>
-	token          = 1*<any CHAR except CTLs or separators>
-	separators     = "(" | ")" | "<" | ">" | "@"
-	| "," | ";" | ":" | "\" | <">
-	| "/" | "[" | "]" | "?" | "="
-	| "{" | "}" | SP | HT
-	* @param {string} name
-	*/
-	function validateCookieName(name) {
-		for (let i = 0; i < name.length; ++i) {
-			const code = name.charCodeAt(i);
-			if (code < 33 || code > 126 || code === 34 || code === 40 || code === 41 || code === 60 || code === 62 || code === 64 || code === 44 || code === 59 || code === 58 || code === 92 || code === 47 || code === 91 || code === 93 || code === 63 || code === 61 || code === 123 || code === 125) throw new Error("Invalid cookie name");
-		}
-	}
-	/**
-	cookie-value      = *cookie-octet / ( DQUOTE *cookie-octet DQUOTE )
-	cookie-octet      = %x21 / %x23-2B / %x2D-3A / %x3C-5B / %x5D-7E
-	; US-ASCII characters excluding CTLs,
-	; whitespace DQUOTE, comma, semicolon,
-	; and backslash
-	* @param {string} value
-	*/
-	function validateCookieValue(value) {
-		let len = value.length;
-		let i = 0;
-		if (value[0] === "\"") {
-			if (len === 1 || value[len - 1] !== "\"") throw new Error("Invalid cookie value");
-			--len;
-			++i;
-		}
-		while (i < len) {
-			const code = value.charCodeAt(i++);
-			if (code < 33 || code > 126 || code === 34 || code === 44 || code === 59 || code === 92) throw new Error("Invalid cookie value");
-		}
-	}
-	/**
-	* path-value        = <any CHAR except CTLs or ";">
-	* @param {string} path
-	*/
-	function validateCookiePath(path) {
-		for (let i = 0; i < path.length; ++i) {
-			const code = path.charCodeAt(i);
-			if (code < 32 || code === 127 || code === 59) throw new Error("Invalid cookie path");
-		}
-	}
-	/**
-	* I have no idea why these values aren't allowed to be honest,
-	* but Deno tests these. - Khafra
-	* @param {string} domain
-	*/
-	function validateCookieDomain(domain) {
-		if (domain.startsWith("-") || domain.endsWith(".") || domain.endsWith("-")) throw new Error("Invalid cookie domain");
-	}
-	var IMFDays = [
-		"Sun",
-		"Mon",
-		"Tue",
-		"Wed",
-		"Thu",
-		"Fri",
-		"Sat"
-	];
-	var IMFMonths = [
-		"Jan",
-		"Feb",
-		"Mar",
-		"Apr",
-		"May",
-		"Jun",
-		"Jul",
-		"Aug",
-		"Sep",
-		"Oct",
-		"Nov",
-		"Dec"
-	];
-	var IMFPaddedNumbers = Array(61).fill(0).map((_, i) => i.toString().padStart(2, "0"));
-	/**
-	* @see https://www.rfc-editor.org/rfc/rfc7231#section-7.1.1.1
-	* @param {number|Date} date
-	IMF-fixdate  = day-name "," SP date1 SP time-of-day SP GMT
-	; fixed length/zone/capitalization subset of the format
-	; see Section 3.3 of [RFC5322]
-	
-	day-name     = %x4D.6F.6E ; "Mon", case-sensitive
-	/ %x54.75.65 ; "Tue", case-sensitive
-	/ %x57.65.64 ; "Wed", case-sensitive
-	/ %x54.68.75 ; "Thu", case-sensitive
-	/ %x46.72.69 ; "Fri", case-sensitive
-	/ %x53.61.74 ; "Sat", case-sensitive
-	/ %x53.75.6E ; "Sun", case-sensitive
-	date1        = day SP month SP year
-	; e.g., 02 Jun 1982
-	
-	day          = 2DIGIT
-	month        = %x4A.61.6E ; "Jan", case-sensitive
-	/ %x46.65.62 ; "Feb", case-sensitive
-	/ %x4D.61.72 ; "Mar", case-sensitive
-	/ %x41.70.72 ; "Apr", case-sensitive
-	/ %x4D.61.79 ; "May", case-sensitive
-	/ %x4A.75.6E ; "Jun", case-sensitive
-	/ %x4A.75.6C ; "Jul", case-sensitive
-	/ %x41.75.67 ; "Aug", case-sensitive
-	/ %x53.65.70 ; "Sep", case-sensitive
-	/ %x4F.63.74 ; "Oct", case-sensitive
-	/ %x4E.6F.76 ; "Nov", case-sensitive
-	/ %x44.65.63 ; "Dec", case-sensitive
-	year         = 4DIGIT
-	
-	GMT          = %x47.4D.54 ; "GMT", case-sensitive
-	
-	time-of-day  = hour ":" minute ":" second
-	; 00:00:00 - 23:59:60 (leap second)
-	
-	hour         = 2DIGIT
-	minute       = 2DIGIT
-	second       = 2DIGIT
-	*/
-	function toIMFDate(date) {
-		if (typeof date === "number") date = new Date(date);
-		return `${IMFDays[date.getUTCDay()]}, ${IMFPaddedNumbers[date.getUTCDate()]} ${IMFMonths[date.getUTCMonth()]} ${date.getUTCFullYear()} ${IMFPaddedNumbers[date.getUTCHours()]}:${IMFPaddedNumbers[date.getUTCMinutes()]}:${IMFPaddedNumbers[date.getUTCSeconds()]} GMT`;
-	}
-	/**
-	max-age-av        = "Max-Age=" non-zero-digit *DIGIT
-	; In practice, both expires-av and max-age-av
-	; are limited to dates representable by the
-	; user agent.
-	* @param {number} maxAge
-	*/
-	function validateCookieMaxAge(maxAge) {
-		if (maxAge < 0) throw new Error("Invalid cookie max-age");
-	}
-	/**
-	* @see https://www.rfc-editor.org/rfc/rfc6265#section-4.1.1
-	* @param {import('./index').Cookie} cookie
-	*/
-	function stringify(cookie) {
-		if (cookie.name.length === 0) return null;
-		validateCookieName(cookie.name);
-		validateCookieValue(cookie.value);
-		const out = [`${cookie.name}=${cookie.value}`];
-		if (cookie.name.startsWith("__Secure-")) cookie.secure = true;
-		if (cookie.name.startsWith("__Host-")) {
-			cookie.secure = true;
-			cookie.domain = null;
-			cookie.path = "/";
-		}
-		if (cookie.secure) out.push("Secure");
-		if (cookie.httpOnly) out.push("HttpOnly");
-		if (typeof cookie.maxAge === "number") {
-			validateCookieMaxAge(cookie.maxAge);
-			out.push(`Max-Age=${cookie.maxAge}`);
-		}
-		if (cookie.domain) {
-			validateCookieDomain(cookie.domain);
-			out.push(`Domain=${cookie.domain}`);
-		}
-		if (cookie.path) {
-			validateCookiePath(cookie.path);
-			out.push(`Path=${cookie.path}`);
-		}
-		if (cookie.expires && cookie.expires.toString() !== "Invalid Date") out.push(`Expires=${toIMFDate(cookie.expires)}`);
-		if (cookie.sameSite) out.push(`SameSite=${cookie.sameSite}`);
-		for (const part of cookie.unparsed) {
-			if (!part.includes("=")) throw new Error("Invalid unparsed");
-			const [key, ...value] = part.split("=");
-			out.push(`${key.trim()}=${value.join("=")}`);
-		}
-		return out.join("; ");
-	}
-	module.exports = {
-		isCTLExcludingHtab,
-		validateCookieName,
-		validateCookiePath,
-		validateCookieValue,
-		toIMFDate,
-		stringify
-	};
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/cookies/parse.js
-var require_parse$1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { maxNameValuePairSize, maxAttributeValueSize } = require_constants$2();
-	var { isCTLExcludingHtab } = require_util$2();
-	var { collectASequenceOfCodePointsFast } = require_data_url();
-	var assert$2 = require("node:assert");
-	/**
-	* @description Parses the field-value attributes of a set-cookie header string.
-	* @see https://datatracker.ietf.org/doc/html/draft-ietf-httpbis-rfc6265bis#section-5.4
-	* @param {string} header
-	* @returns if the header is invalid, null will be returned
-	*/
-	function parseSetCookie(header) {
-		if (isCTLExcludingHtab(header)) return null;
-		let nameValuePair = "";
-		let unparsedAttributes = "";
-		let name = "";
-		let value = "";
-		if (header.includes(";")) {
-			const position = { position: 0 };
-			nameValuePair = collectASequenceOfCodePointsFast(";", header, position);
-			unparsedAttributes = header.slice(position.position);
-		} else nameValuePair = header;
-		if (!nameValuePair.includes("=")) value = nameValuePair;
-		else {
-			const position = { position: 0 };
-			name = collectASequenceOfCodePointsFast("=", nameValuePair, position);
-			value = nameValuePair.slice(position.position + 1);
-		}
-		name = name.trim();
-		value = value.trim();
-		if (name.length + value.length > maxNameValuePairSize) return null;
-		return {
-			name,
-			value,
-			...parseUnparsedAttributes(unparsedAttributes)
-		};
-	}
-	/**
-	* Parses the remaining attributes of a set-cookie header
-	* @see https://datatracker.ietf.org/doc/html/draft-ietf-httpbis-rfc6265bis#section-5.4
-	* @param {string} unparsedAttributes
-	* @param {[Object.<string, unknown>]={}} cookieAttributeList
-	*/
-	function parseUnparsedAttributes(unparsedAttributes, cookieAttributeList = {}) {
-		if (unparsedAttributes.length === 0) return cookieAttributeList;
-		assert$2(unparsedAttributes[0] === ";");
-		unparsedAttributes = unparsedAttributes.slice(1);
-		let cookieAv = "";
-		if (unparsedAttributes.includes(";")) {
-			cookieAv = collectASequenceOfCodePointsFast(";", unparsedAttributes, { position: 0 });
-			unparsedAttributes = unparsedAttributes.slice(cookieAv.length);
-		} else {
-			cookieAv = unparsedAttributes;
-			unparsedAttributes = "";
-		}
-		let attributeName = "";
-		let attributeValue = "";
-		if (cookieAv.includes("=")) {
-			const position = { position: 0 };
-			attributeName = collectASequenceOfCodePointsFast("=", cookieAv, position);
-			attributeValue = cookieAv.slice(position.position + 1);
-		} else attributeName = cookieAv;
-		attributeName = attributeName.trim();
-		attributeValue = attributeValue.trim();
-		if (attributeValue.length > maxAttributeValueSize) return parseUnparsedAttributes(unparsedAttributes, cookieAttributeList);
-		const attributeNameLowercase = attributeName.toLowerCase();
-		if (attributeNameLowercase === "expires") cookieAttributeList.expires = new Date(attributeValue);
-		else if (attributeNameLowercase === "max-age") {
-			const charCode = attributeValue.charCodeAt(0);
-			if ((charCode < 48 || charCode > 57) && attributeValue[0] !== "-") return parseUnparsedAttributes(unparsedAttributes, cookieAttributeList);
-			if (!/^\d+$/.test(attributeValue)) return parseUnparsedAttributes(unparsedAttributes, cookieAttributeList);
-			cookieAttributeList.maxAge = Number(attributeValue);
-		} else if (attributeNameLowercase === "domain") {
-			let cookieDomain = attributeValue;
-			if (cookieDomain[0] === ".") cookieDomain = cookieDomain.slice(1);
-			cookieDomain = cookieDomain.toLowerCase();
-			cookieAttributeList.domain = cookieDomain;
-		} else if (attributeNameLowercase === "path") {
-			let cookiePath = "";
-			if (attributeValue.length === 0 || attributeValue[0] !== "/") cookiePath = "/";
-			else cookiePath = attributeValue;
-			cookieAttributeList.path = cookiePath;
-		} else if (attributeNameLowercase === "secure") cookieAttributeList.secure = true;
-		else if (attributeNameLowercase === "httponly") cookieAttributeList.httpOnly = true;
-		else if (attributeNameLowercase === "samesite") {
-			const attributeValueLowercase = attributeValue.toLowerCase();
-			if (attributeValueLowercase === "none") cookieAttributeList.sameSite = "None";
-			else if (attributeValueLowercase === "strict") cookieAttributeList.sameSite = "Strict";
-			else if (attributeValueLowercase === "lax") cookieAttributeList.sameSite = "Lax";
-		} else {
-			cookieAttributeList.unparsed ??= [];
-			cookieAttributeList.unparsed.push(`${attributeName}=${attributeValue}`);
-		}
-		return parseUnparsedAttributes(unparsedAttributes, cookieAttributeList);
-	}
-	module.exports = {
-		parseSetCookie,
-		parseUnparsedAttributes
-	};
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/cookies/index.js
-var require_cookies = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { parseSetCookie } = require_parse$1();
-	var { stringify } = require_util$2();
-	var { webidl } = require_webidl();
-	var { Headers } = require_headers();
-	/**
-	* @typedef {Object} Cookie
-	* @property {string} name
-	* @property {string} value
-	* @property {Date|number|undefined} expires
-	* @property {number|undefined} maxAge
-	* @property {string|undefined} domain
-	* @property {string|undefined} path
-	* @property {boolean|undefined} secure
-	* @property {boolean|undefined} httpOnly
-	* @property {'Strict'|'Lax'|'None'} sameSite
-	* @property {string[]} unparsed
-	*/
-	/**
-	* @param {Headers} headers
-	* @returns {Record<string, string>}
-	*/
-	function getCookies(headers) {
-		webidl.argumentLengthCheck(arguments, 1, "getCookies");
-		webidl.brandCheck(headers, Headers, { strict: false });
-		const cookie = headers.get("cookie");
-		const out = {};
-		if (!cookie) return out;
-		for (const piece of cookie.split(";")) {
-			const [name, ...value] = piece.split("=");
-			out[name.trim()] = value.join("=");
-		}
-		return out;
-	}
-	/**
-	* @param {Headers} headers
-	* @param {string} name
-	* @param {{ path?: string, domain?: string }|undefined} attributes
-	* @returns {void}
-	*/
-	function deleteCookie(headers, name, attributes) {
-		webidl.brandCheck(headers, Headers, { strict: false });
-		const prefix = "deleteCookie";
-		webidl.argumentLengthCheck(arguments, 2, prefix);
-		name = webidl.converters.DOMString(name, prefix, "name");
-		attributes = webidl.converters.DeleteCookieAttributes(attributes);
-		setCookie(headers, {
-			name,
-			value: "",
-			expires: /* @__PURE__ */ new Date(0),
-			...attributes
-		});
-	}
-	/**
-	* @param {Headers} headers
-	* @returns {Cookie[]}
-	*/
-	function getSetCookies(headers) {
-		webidl.argumentLengthCheck(arguments, 1, "getSetCookies");
-		webidl.brandCheck(headers, Headers, { strict: false });
-		const cookies = headers.getSetCookie();
-		if (!cookies) return [];
-		return cookies.map((pair) => parseSetCookie(pair));
-	}
-	/**
-	* @param {Headers} headers
-	* @param {Cookie} cookie
-	* @returns {void}
-	*/
-	function setCookie(headers, cookie) {
-		webidl.argumentLengthCheck(arguments, 2, "setCookie");
-		webidl.brandCheck(headers, Headers, { strict: false });
-		cookie = webidl.converters.Cookie(cookie);
-		const str = stringify(cookie);
-		if (str) headers.append("Set-Cookie", str);
-	}
-	webidl.converters.DeleteCookieAttributes = webidl.dictionaryConverter([{
-		converter: webidl.nullableConverter(webidl.converters.DOMString),
-		key: "path",
-		defaultValue: () => null
-	}, {
-		converter: webidl.nullableConverter(webidl.converters.DOMString),
-		key: "domain",
-		defaultValue: () => null
-	}]);
-	webidl.converters.Cookie = webidl.dictionaryConverter([
-		{
-			converter: webidl.converters.DOMString,
-			key: "name"
-		},
-		{
-			converter: webidl.converters.DOMString,
-			key: "value"
-		},
-		{
-			converter: webidl.nullableConverter((value) => {
-				if (typeof value === "number") return webidl.converters["unsigned long long"](value);
-				return new Date(value);
-			}),
-			key: "expires",
-			defaultValue: () => null
-		},
-		{
-			converter: webidl.nullableConverter(webidl.converters["long long"]),
-			key: "maxAge",
-			defaultValue: () => null
-		},
-		{
-			converter: webidl.nullableConverter(webidl.converters.DOMString),
-			key: "domain",
-			defaultValue: () => null
-		},
-		{
-			converter: webidl.nullableConverter(webidl.converters.DOMString),
-			key: "path",
-			defaultValue: () => null
-		},
-		{
-			converter: webidl.nullableConverter(webidl.converters.boolean),
-			key: "secure",
-			defaultValue: () => null
-		},
-		{
-			converter: webidl.nullableConverter(webidl.converters.boolean),
-			key: "httpOnly",
-			defaultValue: () => null
-		},
-		{
-			converter: webidl.converters.USVString,
-			key: "sameSite",
-			allowedValues: [
-				"Strict",
-				"Lax",
-				"None"
-			]
-		},
-		{
-			converter: webidl.sequenceConverter(webidl.converters.DOMString),
-			key: "unparsed",
-			defaultValue: () => new Array(0)
-		}
-	]);
-	module.exports = {
-		getCookies,
-		deleteCookie,
-		getSetCookies,
-		setCookie
-	};
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/websocket/events.js
-var require_events = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { webidl } = require_webidl();
-	var { kEnumerableProperty } = require_util$7();
-	var { kConstruct } = require_symbols$4();
-	var { MessagePort } = require("node:worker_threads");
-	/**
-	* @see https://html.spec.whatwg.org/multipage/comms.html#messageevent
-	*/
-	var MessageEvent = class MessageEvent extends Event {
-		#eventInit;
-		constructor(type, eventInitDict = {}) {
-			if (type === kConstruct) {
-				super(arguments[1], arguments[2]);
-				webidl.util.markAsUncloneable(this);
-				return;
-			}
-			const prefix = "MessageEvent constructor";
-			webidl.argumentLengthCheck(arguments, 1, prefix);
-			type = webidl.converters.DOMString(type, prefix, "type");
-			eventInitDict = webidl.converters.MessageEventInit(eventInitDict, prefix, "eventInitDict");
-			super(type, eventInitDict);
-			this.#eventInit = eventInitDict;
-			webidl.util.markAsUncloneable(this);
-		}
-		get data() {
-			webidl.brandCheck(this, MessageEvent);
-			return this.#eventInit.data;
-		}
-		get origin() {
-			webidl.brandCheck(this, MessageEvent);
-			return this.#eventInit.origin;
-		}
-		get lastEventId() {
-			webidl.brandCheck(this, MessageEvent);
-			return this.#eventInit.lastEventId;
-		}
-		get source() {
-			webidl.brandCheck(this, MessageEvent);
-			return this.#eventInit.source;
-		}
-		get ports() {
-			webidl.brandCheck(this, MessageEvent);
-			if (!Object.isFrozen(this.#eventInit.ports)) Object.freeze(this.#eventInit.ports);
-			return this.#eventInit.ports;
-		}
-		initMessageEvent(type, bubbles = false, cancelable = false, data = null, origin = "", lastEventId = "", source = null, ports = []) {
-			webidl.brandCheck(this, MessageEvent);
-			webidl.argumentLengthCheck(arguments, 1, "MessageEvent.initMessageEvent");
-			return new MessageEvent(type, {
-				bubbles,
-				cancelable,
-				data,
-				origin,
-				lastEventId,
-				source,
-				ports
-			});
-		}
-		static createFastMessageEvent(type, init) {
-			const messageEvent = new MessageEvent(kConstruct, type, init);
-			messageEvent.#eventInit = init;
-			messageEvent.#eventInit.data ??= null;
-			messageEvent.#eventInit.origin ??= "";
-			messageEvent.#eventInit.lastEventId ??= "";
-			messageEvent.#eventInit.source ??= null;
-			messageEvent.#eventInit.ports ??= [];
-			return messageEvent;
-		}
-	};
-	var { createFastMessageEvent } = MessageEvent;
-	delete MessageEvent.createFastMessageEvent;
-	/**
-	* @see https://websockets.spec.whatwg.org/#the-closeevent-interface
-	*/
-	var CloseEvent = class CloseEvent extends Event {
-		#eventInit;
-		constructor(type, eventInitDict = {}) {
-			const prefix = "CloseEvent constructor";
-			webidl.argumentLengthCheck(arguments, 1, prefix);
-			type = webidl.converters.DOMString(type, prefix, "type");
-			eventInitDict = webidl.converters.CloseEventInit(eventInitDict);
-			super(type, eventInitDict);
-			this.#eventInit = eventInitDict;
-			webidl.util.markAsUncloneable(this);
-		}
-		get wasClean() {
-			webidl.brandCheck(this, CloseEvent);
-			return this.#eventInit.wasClean;
-		}
-		get code() {
-			webidl.brandCheck(this, CloseEvent);
-			return this.#eventInit.code;
-		}
-		get reason() {
-			webidl.brandCheck(this, CloseEvent);
-			return this.#eventInit.reason;
-		}
-	};
-	var ErrorEvent = class ErrorEvent extends Event {
-		#eventInit;
-		constructor(type, eventInitDict) {
-			const prefix = "ErrorEvent constructor";
-			webidl.argumentLengthCheck(arguments, 1, prefix);
-			super(type, eventInitDict);
-			webidl.util.markAsUncloneable(this);
-			type = webidl.converters.DOMString(type, prefix, "type");
-			eventInitDict = webidl.converters.ErrorEventInit(eventInitDict ?? {});
-			this.#eventInit = eventInitDict;
-		}
-		get message() {
-			webidl.brandCheck(this, ErrorEvent);
-			return this.#eventInit.message;
-		}
-		get filename() {
-			webidl.brandCheck(this, ErrorEvent);
-			return this.#eventInit.filename;
-		}
-		get lineno() {
-			webidl.brandCheck(this, ErrorEvent);
-			return this.#eventInit.lineno;
-		}
-		get colno() {
-			webidl.brandCheck(this, ErrorEvent);
-			return this.#eventInit.colno;
-		}
-		get error() {
-			webidl.brandCheck(this, ErrorEvent);
-			return this.#eventInit.error;
-		}
-	};
-	Object.defineProperties(MessageEvent.prototype, {
-		[Symbol.toStringTag]: {
-			value: "MessageEvent",
-			configurable: true
-		},
-		data: kEnumerableProperty,
-		origin: kEnumerableProperty,
-		lastEventId: kEnumerableProperty,
-		source: kEnumerableProperty,
-		ports: kEnumerableProperty,
-		initMessageEvent: kEnumerableProperty
-	});
-	Object.defineProperties(CloseEvent.prototype, {
-		[Symbol.toStringTag]: {
-			value: "CloseEvent",
-			configurable: true
-		},
-		reason: kEnumerableProperty,
-		code: kEnumerableProperty,
-		wasClean: kEnumerableProperty
-	});
-	Object.defineProperties(ErrorEvent.prototype, {
-		[Symbol.toStringTag]: {
-			value: "ErrorEvent",
-			configurable: true
-		},
-		message: kEnumerableProperty,
-		filename: kEnumerableProperty,
-		lineno: kEnumerableProperty,
-		colno: kEnumerableProperty,
-		error: kEnumerableProperty
-	});
-	webidl.converters.MessagePort = webidl.interfaceConverter(MessagePort);
-	webidl.converters["sequence<MessagePort>"] = webidl.sequenceConverter(webidl.converters.MessagePort);
-	var eventInit = [
-		{
-			key: "bubbles",
-			converter: webidl.converters.boolean,
-			defaultValue: () => false
-		},
-		{
-			key: "cancelable",
-			converter: webidl.converters.boolean,
-			defaultValue: () => false
-		},
-		{
-			key: "composed",
-			converter: webidl.converters.boolean,
-			defaultValue: () => false
-		}
-	];
-	webidl.converters.MessageEventInit = webidl.dictionaryConverter([
-		...eventInit,
-		{
-			key: "data",
-			converter: webidl.converters.any,
-			defaultValue: () => null
-		},
-		{
-			key: "origin",
-			converter: webidl.converters.USVString,
-			defaultValue: () => ""
-		},
-		{
-			key: "lastEventId",
-			converter: webidl.converters.DOMString,
-			defaultValue: () => ""
-		},
-		{
-			key: "source",
-			converter: webidl.nullableConverter(webidl.converters.MessagePort),
-			defaultValue: () => null
-		},
-		{
-			key: "ports",
-			converter: webidl.converters["sequence<MessagePort>"],
-			defaultValue: () => new Array(0)
-		}
-	]);
-	webidl.converters.CloseEventInit = webidl.dictionaryConverter([
-		...eventInit,
-		{
-			key: "wasClean",
-			converter: webidl.converters.boolean,
-			defaultValue: () => false
-		},
-		{
-			key: "code",
-			converter: webidl.converters["unsigned short"],
-			defaultValue: () => 0
-		},
-		{
-			key: "reason",
-			converter: webidl.converters.USVString,
-			defaultValue: () => ""
-		}
-	]);
-	webidl.converters.ErrorEventInit = webidl.dictionaryConverter([
-		...eventInit,
-		{
-			key: "message",
-			converter: webidl.converters.DOMString,
-			defaultValue: () => ""
-		},
-		{
-			key: "filename",
-			converter: webidl.converters.USVString,
-			defaultValue: () => ""
-		},
-		{
-			key: "lineno",
-			converter: webidl.converters["unsigned long"],
-			defaultValue: () => 0
-		},
-		{
-			key: "colno",
-			converter: webidl.converters["unsigned long"],
-			defaultValue: () => 0
-		},
-		{
-			key: "error",
-			converter: webidl.converters.any
-		}
-	]);
-	module.exports = {
-		MessageEvent,
-		CloseEvent,
-		ErrorEvent,
-		createFastMessageEvent
-	};
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/websocket/constants.js
-var require_constants$1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	module.exports = {
-		uid: "258EAFA5-E914-47DA-95CA-C5AB0DC85B11",
-		sentCloseFrameState: {
-			NOT_SENT: 0,
-			PROCESSING: 1,
-			SENT: 2
-		},
-		staticPropertyDescriptors: {
-			enumerable: true,
-			writable: false,
-			configurable: false
-		},
-		states: {
-			CONNECTING: 0,
-			OPEN: 1,
-			CLOSING: 2,
-			CLOSED: 3
-		},
-		opcodes: {
-			CONTINUATION: 0,
-			TEXT: 1,
-			BINARY: 2,
-			CLOSE: 8,
-			PING: 9,
-			PONG: 10
-		},
-		maxUnsigned16Bit: 2 ** 16 - 1,
-		parserStates: {
-			INFO: 0,
-			PAYLOADLENGTH_16: 2,
-			PAYLOADLENGTH_64: 3,
-			READ_DATA: 4
-		},
-		emptyBuffer: Buffer.allocUnsafe(0),
-		sendHints: {
-			string: 1,
-			typedArray: 2,
-			arrayBuffer: 3,
-			blob: 4
-		}
-	};
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/websocket/symbols.js
-var require_symbols = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	module.exports = {
-		kWebSocketURL: Symbol("url"),
-		kReadyState: Symbol("ready state"),
-		kController: Symbol("controller"),
-		kResponse: Symbol("response"),
-		kBinaryType: Symbol("binary type"),
-		kSentClose: Symbol("sent close"),
-		kReceivedClose: Symbol("received close"),
-		kByteParser: Symbol("byte parser")
-	};
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/websocket/util.js
-var require_util$1 = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { kReadyState, kController, kResponse, kBinaryType, kWebSocketURL } = require_symbols();
-	var { states, opcodes } = require_constants$1();
-	var { ErrorEvent, createFastMessageEvent } = require_events();
-	var { isUtf8 } = require("node:buffer");
-	var { collectASequenceOfCodePointsFast, removeHTTPWhitespace } = require_data_url();
-	/**
-	* @param {import('./websocket').WebSocket} ws
-	* @returns {boolean}
-	*/
-	function isConnecting(ws) {
-		return ws[kReadyState] === states.CONNECTING;
-	}
-	/**
-	* @param {import('./websocket').WebSocket} ws
-	* @returns {boolean}
-	*/
-	function isEstablished(ws) {
-		return ws[kReadyState] === states.OPEN;
-	}
-	/**
-	* @param {import('./websocket').WebSocket} ws
-	* @returns {boolean}
-	*/
-	function isClosing(ws) {
-		return ws[kReadyState] === states.CLOSING;
-	}
-	/**
-	* @param {import('./websocket').WebSocket} ws
-	* @returns {boolean}
-	*/
-	function isClosed(ws) {
-		return ws[kReadyState] === states.CLOSED;
-	}
-	/**
-	* @see https://dom.spec.whatwg.org/#concept-event-fire
-	* @param {string} e
-	* @param {EventTarget} target
-	* @param {(...args: ConstructorParameters<typeof Event>) => Event} eventFactory
-	* @param {EventInit | undefined} eventInitDict
-	*/
-	function fireEvent(e, target, eventFactory = (type, init) => new Event(type, init), eventInitDict = {}) {
-		const event = eventFactory(e, eventInitDict);
-		target.dispatchEvent(event);
-	}
-	/**
-	* @see https://websockets.spec.whatwg.org/#feedback-from-the-protocol
-	* @param {import('./websocket').WebSocket} ws
-	* @param {number} type Opcode
-	* @param {Buffer} data application data
-	*/
-	function websocketMessageReceived(ws, type, data) {
-		if (ws[kReadyState] !== states.OPEN) return;
-		let dataForEvent;
-		if (type === opcodes.TEXT) try {
-			dataForEvent = utf8Decode(data);
-		} catch {
-			failWebsocketConnection(ws, "Received invalid UTF-8 in text frame.");
-			return;
-		}
-		else if (type === opcodes.BINARY) if (ws[kBinaryType] === "blob") dataForEvent = new Blob([data]);
-		else dataForEvent = toArrayBuffer(data);
-		fireEvent("message", ws, createFastMessageEvent, {
-			origin: ws[kWebSocketURL].origin,
-			data: dataForEvent
-		});
-	}
-	function toArrayBuffer(buffer) {
-		if (buffer.byteLength === buffer.buffer.byteLength) return buffer.buffer;
-		return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
-	}
-	/**
-	* @see https://datatracker.ietf.org/doc/html/rfc6455
-	* @see https://datatracker.ietf.org/doc/html/rfc2616
-	* @see https://bugs.chromium.org/p/chromium/issues/detail?id=398407
-	* @param {string} protocol
-	*/
-	function isValidSubprotocol(protocol) {
-		if (protocol.length === 0) return false;
-		for (let i = 0; i < protocol.length; ++i) {
-			const code = protocol.charCodeAt(i);
-			if (code < 33 || code > 126 || code === 34 || code === 40 || code === 41 || code === 44 || code === 47 || code === 58 || code === 59 || code === 60 || code === 61 || code === 62 || code === 63 || code === 64 || code === 91 || code === 92 || code === 93 || code === 123 || code === 125) return false;
-		}
-		return true;
-	}
-	/**
-	* @see https://datatracker.ietf.org/doc/html/rfc6455#section-7-4
-	* @param {number} code
-	*/
-	function isValidStatusCode(code) {
-		if (code >= 1e3 && code < 1015) return code !== 1004 && code !== 1005 && code !== 1006;
-		return code >= 3e3 && code <= 4999;
-	}
-	/**
-	* @param {import('./websocket').WebSocket} ws
-	* @param {string|undefined} reason
-	*/
-	function failWebsocketConnection(ws, reason) {
-		const { [kController]: controller, [kResponse]: response } = ws;
-		controller.abort();
-		if (response?.socket && !response.socket.destroyed) response.socket.destroy();
-		if (reason) fireEvent("error", ws, (type, init) => new ErrorEvent(type, init), {
-			error: new Error(reason),
-			message: reason
-		});
-	}
-	/**
-	* @see https://datatracker.ietf.org/doc/html/rfc6455#section-5.5
-	* @param {number} opcode
-	*/
-	function isControlFrame(opcode) {
-		return opcode === opcodes.CLOSE || opcode === opcodes.PING || opcode === opcodes.PONG;
-	}
-	function isContinuationFrame(opcode) {
-		return opcode === opcodes.CONTINUATION;
-	}
-	function isTextBinaryFrame(opcode) {
-		return opcode === opcodes.TEXT || opcode === opcodes.BINARY;
-	}
-	function isValidOpcode(opcode) {
-		return isTextBinaryFrame(opcode) || isContinuationFrame(opcode) || isControlFrame(opcode);
-	}
-	/**
-	* Parses a Sec-WebSocket-Extensions header value.
-	* @param {string} extensions
-	* @returns {Map<string, string>}
-	*/
-	function parseExtensions(extensions) {
-		const position = { position: 0 };
-		const extensionList = /* @__PURE__ */ new Map();
-		while (position.position < extensions.length) {
-			const [name, value = ""] = collectASequenceOfCodePointsFast(";", extensions, position).split("=");
-			extensionList.set(removeHTTPWhitespace(name, true, false), removeHTTPWhitespace(value, false, true));
-			position.position++;
-		}
-		return extensionList;
-	}
-	/**
-	* @see https://www.rfc-editor.org/rfc/rfc7692#section-7.1.2.2
-	* @description "client-max-window-bits = 1*DIGIT"
-	* @param {string} value
-	*/
-	function isValidClientWindowBits(value) {
-		if (value.length === 0) return false;
-		for (let i = 0; i < value.length; i++) {
-			const byte = value.charCodeAt(i);
-			if (byte < 48 || byte > 57) return false;
-		}
-		const num = Number.parseInt(value, 10);
-		return num >= 8 && num <= 15;
-	}
-	var hasIntl = typeof process.versions.icu === "string";
-	var fatalDecoder = hasIntl ? new TextDecoder("utf-8", { fatal: true }) : void 0;
-	/**
-	* Converts a Buffer to utf-8, even on platforms without icu.
-	* @param {Buffer} buffer
-	*/
-	var utf8Decode = hasIntl ? fatalDecoder.decode.bind(fatalDecoder) : function(buffer) {
-		if (isUtf8(buffer)) return buffer.toString("utf-8");
-		throw new TypeError("Invalid utf-8 received.");
-	};
-	module.exports = {
-		isConnecting,
-		isEstablished,
-		isClosing,
-		isClosed,
-		fireEvent,
-		isValidSubprotocol,
-		isValidStatusCode,
-		failWebsocketConnection,
-		websocketMessageReceived,
-		utf8Decode,
-		isControlFrame,
-		isContinuationFrame,
-		isTextBinaryFrame,
-		isValidOpcode,
-		parseExtensions,
-		isValidClientWindowBits
-	};
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/websocket/frame.js
-var require_frame = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { maxUnsigned16Bit } = require_constants$1();
-	var BUFFER_SIZE = 16386;
-	/** @type {import('crypto')} */
-	var crypto;
-	var buffer = null;
-	var bufIdx = BUFFER_SIZE;
-	try {
-		crypto = require("node:crypto");
-	} catch {
-		crypto = { randomFillSync: function randomFillSync(buffer, _offset, _size) {
-			for (let i = 0; i < buffer.length; ++i) buffer[i] = Math.random() * 255 | 0;
-			return buffer;
-		} };
-	}
-	function generateMask() {
-		if (bufIdx === BUFFER_SIZE) {
-			bufIdx = 0;
-			crypto.randomFillSync(buffer ??= Buffer.allocUnsafe(BUFFER_SIZE), 0, BUFFER_SIZE);
-		}
-		return [
-			buffer[bufIdx++],
-			buffer[bufIdx++],
-			buffer[bufIdx++],
-			buffer[bufIdx++]
-		];
-	}
-	var WebsocketFrameSend = class {
-		/**
-		* @param {Buffer|undefined} data
-		*/
-		constructor(data) {
-			this.frameData = data;
-		}
-		createFrame(opcode) {
-			const frameData = this.frameData;
-			const maskKey = generateMask();
-			const bodyLength = frameData?.byteLength ?? 0;
-			/** @type {number} */
-			let payloadLength = bodyLength;
-			let offset = 6;
-			if (bodyLength > maxUnsigned16Bit) {
-				offset += 8;
-				payloadLength = 127;
-			} else if (bodyLength > 125) {
-				offset += 2;
-				payloadLength = 126;
-			}
-			const buffer = Buffer.allocUnsafe(bodyLength + offset);
-			buffer[0] = buffer[1] = 0;
-			buffer[0] |= 128;
-			buffer[0] = (buffer[0] & 240) + opcode;
-			/*! ws. MIT License. Einar Otto Stangvik <einaros@gmail.com> */
-			buffer[offset - 4] = maskKey[0];
-			buffer[offset - 3] = maskKey[1];
-			buffer[offset - 2] = maskKey[2];
-			buffer[offset - 1] = maskKey[3];
-			buffer[1] = payloadLength;
-			if (payloadLength === 126) buffer.writeUInt16BE(bodyLength, 2);
-			else if (payloadLength === 127) {
-				buffer[2] = buffer[3] = 0;
-				buffer.writeUIntBE(bodyLength, 4, 6);
-			}
-			buffer[1] |= 128;
-			for (let i = 0; i < bodyLength; ++i) buffer[offset + i] = frameData[i] ^ maskKey[i & 3];
-			return buffer;
-		}
-	};
-	module.exports = { WebsocketFrameSend };
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/websocket/connection.js
-var require_connection = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { uid, states, sentCloseFrameState, emptyBuffer, opcodes } = require_constants$1();
-	var { kReadyState, kSentClose, kByteParser, kReceivedClose, kResponse } = require_symbols();
-	var { fireEvent, failWebsocketConnection, isClosing, isClosed, isEstablished, parseExtensions } = require_util$1();
-	var { channels } = require_diagnostics();
-	var { CloseEvent } = require_events();
-	var { makeRequest } = require_request();
-	var { fetching } = require_fetch();
-	var { Headers, getHeadersList } = require_headers();
-	var { getDecodeSplit } = require_util$6();
-	var { WebsocketFrameSend } = require_frame();
-	/** @type {import('crypto')} */
-	var crypto;
-	try {
-		crypto = require("node:crypto");
-	} catch {}
-	/**
-	* @see https://websockets.spec.whatwg.org/#concept-websocket-establish
-	* @param {URL} url
-	* @param {string|string[]} protocols
-	* @param {import('./websocket').WebSocket} ws
-	* @param {(response: any, extensions: string[] | undefined) => void} onEstablish
-	* @param {Partial<import('../../types/websocket').WebSocketInit>} options
-	*/
-	function establishWebSocketConnection(url, protocols, client, ws, onEstablish, options) {
-		const requestURL = url;
-		requestURL.protocol = url.protocol === "ws:" ? "http:" : "https:";
-		const request = makeRequest({
-			urlList: [requestURL],
-			client,
-			serviceWorkers: "none",
-			referrer: "no-referrer",
-			mode: "websocket",
-			credentials: "include",
-			cache: "no-store",
-			redirect: "error"
-		});
-		if (options.headers) request.headersList = getHeadersList(new Headers(options.headers));
-		const keyValue = crypto.randomBytes(16).toString("base64");
-		request.headersList.append("sec-websocket-key", keyValue);
-		request.headersList.append("sec-websocket-version", "13");
-		for (const protocol of protocols) request.headersList.append("sec-websocket-protocol", protocol);
-		request.headersList.append("sec-websocket-extensions", "permessage-deflate; client_max_window_bits");
-		return fetching({
-			request,
-			useParallelQueue: true,
-			dispatcher: options.dispatcher,
-			processResponse(response) {
-				if (response.type === "error" || response.status !== 101) {
-					failWebsocketConnection(ws, "Received network error or non-101 status code.");
-					return;
-				}
-				if (protocols.length !== 0 && !response.headersList.get("Sec-WebSocket-Protocol")) {
-					failWebsocketConnection(ws, "Server did not respond with sent protocols.");
-					return;
-				}
-				if (response.headersList.get("Upgrade")?.toLowerCase() !== "websocket") {
-					failWebsocketConnection(ws, "Server did not set Upgrade header to \"websocket\".");
-					return;
-				}
-				if (response.headersList.get("Connection")?.toLowerCase() !== "upgrade") {
-					failWebsocketConnection(ws, "Server did not set Connection header to \"upgrade\".");
-					return;
-				}
-				if (response.headersList.get("Sec-WebSocket-Accept") !== crypto.createHash("sha1").update(keyValue + uid).digest("base64")) {
-					failWebsocketConnection(ws, "Incorrect hash received in Sec-WebSocket-Accept header.");
-					return;
-				}
-				const secExtension = response.headersList.get("Sec-WebSocket-Extensions");
-				let extensions;
-				if (secExtension !== null) {
-					extensions = parseExtensions(secExtension);
-					if (!extensions.has("permessage-deflate")) {
-						failWebsocketConnection(ws, "Sec-WebSocket-Extensions header does not match.");
-						return;
-					}
-				}
-				const secProtocol = response.headersList.get("Sec-WebSocket-Protocol");
-				if (secProtocol !== null) {
-					if (!getDecodeSplit("sec-websocket-protocol", request.headersList).includes(secProtocol)) {
-						failWebsocketConnection(ws, "Protocol was not set in the opening handshake.");
-						return;
-					}
-				}
-				response.socket.on("data", onSocketData);
-				response.socket.on("close", onSocketClose);
-				response.socket.on("error", onSocketError);
-				if (channels.open.hasSubscribers) channels.open.publish({
-					address: response.socket.address(),
-					protocol: secProtocol,
-					extensions: secExtension
-				});
-				onEstablish(response, extensions);
-			}
-		});
-	}
-	function closeWebSocketConnection(ws, code, reason, reasonByteLength) {
-		if (isClosing(ws) || isClosed(ws)) {} else if (!isEstablished(ws)) {
-			failWebsocketConnection(ws, "Connection was closed before it was established.");
-			ws[kReadyState] = states.CLOSING;
-		} else if (ws[kSentClose] === sentCloseFrameState.NOT_SENT) {
-			ws[kSentClose] = sentCloseFrameState.PROCESSING;
-			const frame = new WebsocketFrameSend();
-			if (code !== void 0 && reason === void 0) {
-				frame.frameData = Buffer.allocUnsafe(2);
-				frame.frameData.writeUInt16BE(code, 0);
-			} else if (code !== void 0 && reason !== void 0) {
-				frame.frameData = Buffer.allocUnsafe(2 + reasonByteLength);
-				frame.frameData.writeUInt16BE(code, 0);
-				frame.frameData.write(reason, 2, "utf-8");
-			} else frame.frameData = emptyBuffer;
-			ws[kResponse].socket.write(frame.createFrame(opcodes.CLOSE));
-			ws[kSentClose] = sentCloseFrameState.SENT;
-			ws[kReadyState] = states.CLOSING;
-		} else ws[kReadyState] = states.CLOSING;
-	}
-	/**
-	* @param {Buffer} chunk
-	*/
-	function onSocketData(chunk) {
-		if (!this.ws[kByteParser].write(chunk)) this.pause();
-	}
-	/**
-	* @see https://websockets.spec.whatwg.org/#feedback-from-the-protocol
-	* @see https://datatracker.ietf.org/doc/html/rfc6455#section-7.1.4
-	*/
-	function onSocketClose() {
-		const { ws } = this;
-		const { [kResponse]: response } = ws;
-		response.socket.off("data", onSocketData);
-		response.socket.off("close", onSocketClose);
-		response.socket.off("error", onSocketError);
-		const wasClean = ws[kSentClose] === sentCloseFrameState.SENT && ws[kReceivedClose];
-		let code = 1005;
-		let reason = "";
-		const result = ws[kByteParser].closingInfo;
-		if (result && !result.error) {
-			code = result.code ?? 1005;
-			reason = result.reason;
-		} else if (!ws[kReceivedClose]) code = 1006;
-		ws[kReadyState] = states.CLOSED;
-		fireEvent("close", ws, (type, init) => new CloseEvent(type, init), {
-			wasClean,
-			code,
-			reason
-		});
-		if (channels.close.hasSubscribers) channels.close.publish({
-			websocket: ws,
-			code,
-			reason
-		});
-	}
-	function onSocketError(error) {
-		const { ws } = this;
-		ws[kReadyState] = states.CLOSING;
-		if (channels.socketError.hasSubscribers) channels.socketError.publish(error);
-		this.destroy();
-	}
-	module.exports = {
-		establishWebSocketConnection,
-		closeWebSocketConnection
-	};
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/websocket/permessage-deflate.js
-var require_permessage_deflate = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { createInflateRaw, Z_DEFAULT_WINDOWBITS } = require("node:zlib");
-	var { isValidClientWindowBits } = require_util$1();
-	var { MessageSizeExceededError } = require_errors();
-	var tail = Buffer.from([
-		0,
-		0,
-		255,
-		255
-	]);
-	var kBuffer = Symbol("kBuffer");
-	var kLength = Symbol("kLength");
-	var PerMessageDeflate = class {
-		/** @type {import('node:zlib').InflateRaw} */
-		#inflate;
-		#options = {};
-		#maxPayloadSize = 0;
-		/**
-		* @param {Map<string, string>} extensions
-		*/
-		constructor(extensions, options) {
-			this.#options.serverNoContextTakeover = extensions.has("server_no_context_takeover");
-			this.#options.serverMaxWindowBits = extensions.get("server_max_window_bits");
-			this.#maxPayloadSize = options.maxPayloadSize;
-		}
-		/**
-		* Decompress a compressed payload.
-		* @param {Buffer} chunk Compressed data
-		* @param {boolean} fin Final fragment flag
-		* @param {Function} callback Callback function
-		*/
-		decompress(chunk, fin, callback) {
-			if (!this.#inflate) {
-				let windowBits = Z_DEFAULT_WINDOWBITS;
-				if (this.#options.serverMaxWindowBits) {
-					if (!isValidClientWindowBits(this.#options.serverMaxWindowBits)) {
-						callback(/* @__PURE__ */ new Error("Invalid server_max_window_bits"));
-						return;
-					}
-					windowBits = Number.parseInt(this.#options.serverMaxWindowBits);
-				}
-				try {
-					this.#inflate = createInflateRaw({ windowBits });
-				} catch (err) {
-					callback(err);
-					return;
-				}
-				this.#inflate[kBuffer] = [];
-				this.#inflate[kLength] = 0;
-				this.#inflate.on("data", (data) => {
-					this.#inflate[kLength] += data.length;
-					if (this.#maxPayloadSize > 0 && this.#inflate[kLength] > this.#maxPayloadSize) {
-						callback(new MessageSizeExceededError());
-						this.#inflate.removeAllListeners();
-						this.#inflate = null;
-						return;
-					}
-					this.#inflate[kBuffer].push(data);
-				});
-				this.#inflate.on("error", (err) => {
-					this.#inflate = null;
-					callback(err);
-				});
-			}
-			this.#inflate.write(chunk);
-			if (fin) this.#inflate.write(tail);
-			this.#inflate.flush(() => {
-				if (!this.#inflate) return;
-				const full = Buffer.concat(this.#inflate[kBuffer], this.#inflate[kLength]);
-				this.#inflate[kBuffer].length = 0;
-				this.#inflate[kLength] = 0;
-				callback(null, full);
-			});
-		}
-	};
-	module.exports = { PerMessageDeflate };
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/websocket/receiver.js
-var require_receiver = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { Writable } = require("node:stream");
-	var assert$1 = require("node:assert");
-	var { parserStates, opcodes, states, emptyBuffer, sentCloseFrameState } = require_constants$1();
-	var { kReadyState, kSentClose, kResponse, kReceivedClose } = require_symbols();
-	var { channels } = require_diagnostics();
-	var { isValidStatusCode, isValidOpcode, failWebsocketConnection, websocketMessageReceived, utf8Decode, isControlFrame, isTextBinaryFrame, isContinuationFrame } = require_util$1();
-	var { WebsocketFrameSend } = require_frame();
-	var { closeWebSocketConnection } = require_connection();
-	var { PerMessageDeflate } = require_permessage_deflate();
-	var { MessageSizeExceededError } = require_errors();
-	function failWebsocketConnectionWithCode(ws, code, reason) {
-		closeWebSocketConnection(ws, code, reason, Buffer.byteLength(reason));
-		failWebsocketConnection(ws, reason);
-	}
-	var ByteParser = class extends Writable {
-		#buffers = [];
-		#fragmentsBytes = 0;
-		#byteOffset = 0;
-		#loop = false;
-		#state = parserStates.INFO;
-		#info = {};
-		#fragments = [];
-		/** @type {Map<string, PerMessageDeflate>} */
-		#extensions;
-		/** @type {number} */
-		#maxFragments;
-		/** @type {number} */
-		#maxPayloadSize;
-		/**
-		* @param {import('./websocket').WebSocket} ws
-		* @param {Map<string, string>|null} extensions
-		* @param {{ maxFragments?: number, maxPayloadSize?: number }} [options]
-		*/
-		constructor(ws, extensions, options = {}) {
-			super();
-			this.ws = ws;
-			this.#extensions = extensions == null ? /* @__PURE__ */ new Map() : extensions;
-			this.#maxFragments = options.maxFragments ?? 0;
-			this.#maxPayloadSize = options.maxPayloadSize ?? 0;
-			if (this.#extensions.has("permessage-deflate")) this.#extensions.set("permessage-deflate", new PerMessageDeflate(extensions, options));
-		}
-		/**
-		* @param {Buffer} chunk
-		* @param {() => void} callback
-		*/
-		_write(chunk, _, callback) {
-			this.#buffers.push(chunk);
-			this.#byteOffset += chunk.length;
-			this.#loop = true;
-			this.run(callback);
-		}
-		#validatePayloadLength() {
-			if (this.#maxPayloadSize > 0 && !isControlFrame(this.#info.opcode) && this.#info.payloadLength + this.#fragmentsBytes > this.#maxPayloadSize) {
-				failWebsocketConnectionWithCode(this.ws, 1009, "Payload size exceeds maximum allowed size");
-				return false;
-			}
-			return true;
-		}
-		/**
-		* Runs whenever a new chunk is received.
-		* Callback is called whenever there are no more chunks buffering,
-		* or not enough bytes are buffered to parse.
-		*/
-		run(callback) {
-			while (this.#loop) if (this.#state === parserStates.INFO) {
-				if (this.#byteOffset < 2) return callback();
-				const buffer = this.consume(2);
-				const fin = (buffer[0] & 128) !== 0;
-				const opcode = buffer[0] & 15;
-				const masked = (buffer[1] & 128) === 128;
-				const fragmented = !fin && opcode !== opcodes.CONTINUATION;
-				const payloadLength = buffer[1] & 127;
-				const rsv1 = buffer[0] & 64;
-				const rsv2 = buffer[0] & 32;
-				const rsv3 = buffer[0] & 16;
-				if (!isValidOpcode(opcode)) {
-					failWebsocketConnection(this.ws, "Invalid opcode received");
-					return callback();
-				}
-				if (masked) {
-					failWebsocketConnection(this.ws, "Frame cannot be masked");
-					return callback();
-				}
-				if (rsv1 !== 0 && !this.#extensions.has("permessage-deflate")) {
-					failWebsocketConnection(this.ws, "Expected RSV1 to be clear.");
-					return;
-				}
-				if (rsv2 !== 0 || rsv3 !== 0) {
-					failWebsocketConnection(this.ws, "RSV1, RSV2, RSV3 must be clear");
-					return;
-				}
-				if (fragmented && !isTextBinaryFrame(opcode)) {
-					failWebsocketConnection(this.ws, "Invalid frame type was fragmented.");
-					return;
-				}
-				if (isTextBinaryFrame(opcode) && this.#fragments.length > 0) {
-					failWebsocketConnection(this.ws, "Expected continuation frame");
-					return;
-				}
-				if (this.#info.fragmented && fragmented) {
-					failWebsocketConnection(this.ws, "Fragmented frame exceeded 125 bytes.");
-					return;
-				}
-				if ((payloadLength > 125 || fragmented) && isControlFrame(opcode)) {
-					failWebsocketConnection(this.ws, "Control frame either too large or fragmented");
-					return;
-				}
-				if (isContinuationFrame(opcode) && this.#fragments.length === 0 && !this.#info.compressed) {
-					failWebsocketConnection(this.ws, "Unexpected continuation frame");
-					return;
-				}
-				if (payloadLength <= 125) {
-					this.#info.payloadLength = payloadLength;
-					this.#state = parserStates.READ_DATA;
-					if (!this.#validatePayloadLength()) return;
-				} else if (payloadLength === 126) this.#state = parserStates.PAYLOADLENGTH_16;
-				else if (payloadLength === 127) this.#state = parserStates.PAYLOADLENGTH_64;
-				if (isTextBinaryFrame(opcode)) {
-					this.#info.binaryType = opcode;
-					this.#info.compressed = rsv1 !== 0;
-				}
-				this.#info.opcode = opcode;
-				this.#info.masked = masked;
-				this.#info.fin = fin;
-				this.#info.fragmented = fragmented;
-			} else if (this.#state === parserStates.PAYLOADLENGTH_16) {
-				if (this.#byteOffset < 2) return callback();
-				const buffer = this.consume(2);
-				this.#info.payloadLength = buffer.readUInt16BE(0);
-				this.#state = parserStates.READ_DATA;
-				if (!this.#validatePayloadLength()) return;
-			} else if (this.#state === parserStates.PAYLOADLENGTH_64) {
-				if (this.#byteOffset < 8) return callback();
-				const buffer = this.consume(8);
-				const upper = buffer.readUInt32BE(0);
-				const lower = buffer.readUInt32BE(4);
-				if (upper !== 0 || lower > 2 ** 31 - 1) {
-					failWebsocketConnection(this.ws, "Received payload length > 2^31 bytes.");
-					return;
-				}
-				this.#info.payloadLength = lower;
-				this.#state = parserStates.READ_DATA;
-				if (!this.#validatePayloadLength()) return;
-			} else if (this.#state === parserStates.READ_DATA) {
-				if (this.#byteOffset < this.#info.payloadLength) return callback();
-				const body = this.consume(this.#info.payloadLength);
-				if (isControlFrame(this.#info.opcode)) {
-					this.#loop = this.parseControlFrame(body);
-					this.#state = parserStates.INFO;
-				} else if (!this.#info.compressed) {
-					if (!this.writeFragments(body)) return;
-					if (this.#maxPayloadSize > 0 && this.#fragmentsBytes > this.#maxPayloadSize) {
-						failWebsocketConnectionWithCode(this.ws, 1009, new MessageSizeExceededError().message);
-						return;
-					}
-					if (!this.#info.fragmented && this.#info.fin) websocketMessageReceived(this.ws, this.#info.binaryType, this.consumeFragments());
-					this.#state = parserStates.INFO;
-				} else {
-					this.#extensions.get("permessage-deflate").decompress(body, this.#info.fin, (error, data) => {
-						if (error) {
-							const code = error instanceof MessageSizeExceededError ? 1009 : 1007;
-							failWebsocketConnectionWithCode(this.ws, code, error.message);
-							return;
-						}
-						if (!this.writeFragments(data)) return;
-						if (this.#maxPayloadSize > 0 && this.#fragmentsBytes > this.#maxPayloadSize) {
-							failWebsocketConnectionWithCode(this.ws, 1009, new MessageSizeExceededError().message);
-							return;
-						}
-						if (!this.#info.fin) {
-							this.#state = parserStates.INFO;
-							this.#loop = true;
-							this.run(callback);
-							return;
-						}
-						websocketMessageReceived(this.ws, this.#info.binaryType, this.consumeFragments());
-						this.#loop = true;
-						this.#state = parserStates.INFO;
-						this.run(callback);
-					});
-					this.#loop = false;
-					break;
-				}
-			}
-		}
-		/**
-		* Take n bytes from the buffered Buffers
-		* @param {number} n
-		* @returns {Buffer}
-		*/
-		consume(n) {
-			if (n > this.#byteOffset) throw new Error("Called consume() before buffers satiated.");
-			else if (n === 0) return emptyBuffer;
-			if (this.#buffers[0].length === n) {
-				this.#byteOffset -= this.#buffers[0].length;
-				return this.#buffers.shift();
-			}
-			const buffer = Buffer.allocUnsafe(n);
-			let offset = 0;
-			while (offset !== n) {
-				const next = this.#buffers[0];
-				const { length } = next;
-				if (length + offset === n) {
-					buffer.set(this.#buffers.shift(), offset);
-					break;
-				} else if (length + offset > n) {
-					buffer.set(next.subarray(0, n - offset), offset);
-					this.#buffers[0] = next.subarray(n - offset);
-					break;
-				} else {
-					buffer.set(this.#buffers.shift(), offset);
-					offset += next.length;
-				}
-			}
-			this.#byteOffset -= n;
-			return buffer;
-		}
-		writeFragments(fragment) {
-			if (this.#maxFragments > 0 && this.#fragments.length === this.#maxFragments) {
-				failWebsocketConnectionWithCode(this.ws, 1008, "Too many message fragments");
-				return false;
-			}
-			this.#fragmentsBytes += fragment.length;
-			this.#fragments.push(fragment);
-			return true;
-		}
-		consumeFragments() {
-			const fragments = this.#fragments;
-			if (fragments.length === 1) {
-				this.#fragmentsBytes = 0;
-				return fragments.shift();
-			}
-			const output = Buffer.concat(fragments, this.#fragmentsBytes);
-			this.#fragments = [];
-			this.#fragmentsBytes = 0;
-			return output;
-		}
-		parseCloseBody(data) {
-			assert$1(data.length !== 1);
-			/** @type {number|undefined} */
-			let code;
-			if (data.length >= 2) code = data.readUInt16BE(0);
-			if (code !== void 0 && !isValidStatusCode(code)) return {
-				code: 1002,
-				reason: "Invalid status code",
-				error: true
-			};
-			/** @type {Buffer} */
-			let reason = data.subarray(2);
-			if (reason[0] === 239 && reason[1] === 187 && reason[2] === 191) reason = reason.subarray(3);
-			try {
-				reason = utf8Decode(reason);
-			} catch {
-				return {
-					code: 1007,
-					reason: "Invalid UTF-8",
-					error: true
-				};
-			}
-			return {
-				code,
-				reason,
-				error: false
-			};
-		}
-		/**
-		* Parses control frames.
-		* @param {Buffer} body
-		*/
-		parseControlFrame(body) {
-			const { opcode, payloadLength } = this.#info;
-			if (opcode === opcodes.CLOSE) {
-				if (payloadLength === 1) {
-					failWebsocketConnection(this.ws, "Received close frame with a 1-byte body.");
-					return false;
-				}
-				this.#info.closeInfo = this.parseCloseBody(body);
-				if (this.#info.closeInfo.error) {
-					const { code, reason } = this.#info.closeInfo;
-					closeWebSocketConnection(this.ws, code, reason, reason.length);
-					failWebsocketConnection(this.ws, reason);
-					return false;
-				}
-				if (this.ws[kSentClose] !== sentCloseFrameState.SENT) {
-					let body = emptyBuffer;
-					if (this.#info.closeInfo.code) {
-						body = Buffer.allocUnsafe(2);
-						body.writeUInt16BE(this.#info.closeInfo.code, 0);
-					}
-					const closeFrame = new WebsocketFrameSend(body);
-					this.ws[kResponse].socket.write(closeFrame.createFrame(opcodes.CLOSE), (err) => {
-						if (!err) this.ws[kSentClose] = sentCloseFrameState.SENT;
-					});
-				}
-				this.ws[kReadyState] = states.CLOSING;
-				this.ws[kReceivedClose] = true;
-				return false;
-			} else if (opcode === opcodes.PING) {
-				if (!this.ws[kReceivedClose]) {
-					const frame = new WebsocketFrameSend(body);
-					this.ws[kResponse].socket.write(frame.createFrame(opcodes.PONG));
-					if (channels.ping.hasSubscribers) channels.ping.publish({ payload: body });
-				}
-			} else if (opcode === opcodes.PONG) {
-				if (channels.pong.hasSubscribers) channels.pong.publish({ payload: body });
-			}
-			return true;
-		}
-		get closingInfo() {
-			return this.#info.closeInfo;
-		}
-	};
-	module.exports = { ByteParser };
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/websocket/sender.js
-var require_sender = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { WebsocketFrameSend } = require_frame();
-	var { opcodes, sendHints } = require_constants$1();
-	var FixedQueue = require_fixed_queue();
-	/** @type {typeof Uint8Array} */
-	var FastBuffer = Buffer[Symbol.species];
-	/**
-	* @typedef {object} SendQueueNode
-	* @property {Promise<void> | null} promise
-	* @property {((...args: any[]) => any)} callback
-	* @property {Buffer | null} frame
-	*/
-	var SendQueue = class {
-		/**
-		* @type {FixedQueue}
-		*/
-		#queue = new FixedQueue();
-		/**
-		* @type {boolean}
-		*/
-		#running = false;
-		/** @type {import('node:net').Socket} */
-		#socket;
-		constructor(socket) {
-			this.#socket = socket;
-		}
-		add(item, cb, hint) {
-			if (hint !== sendHints.blob) {
-				const frame = createFrame(item, hint);
-				if (!this.#running) this.#socket.write(frame, cb);
-				else {
-					/** @type {SendQueueNode} */
-					const node = {
-						promise: null,
-						callback: cb,
-						frame
-					};
-					this.#queue.push(node);
-				}
-				return;
-			}
-			/** @type {SendQueueNode} */
-			const node = {
-				promise: item.arrayBuffer().then((ab) => {
-					node.promise = null;
-					node.frame = createFrame(ab, hint);
-				}),
-				callback: cb,
-				frame: null
-			};
-			this.#queue.push(node);
-			if (!this.#running) this.#run();
-		}
-		async #run() {
-			this.#running = true;
-			const queue = this.#queue;
-			while (!queue.isEmpty()) {
-				const node = queue.shift();
-				if (node.promise !== null) await node.promise;
-				this.#socket.write(node.frame, node.callback);
-				node.callback = node.frame = null;
-			}
-			this.#running = false;
-		}
-	};
-	function createFrame(data, hint) {
-		return new WebsocketFrameSend(toBuffer(data, hint)).createFrame(hint === sendHints.string ? opcodes.TEXT : opcodes.BINARY);
-	}
-	function toBuffer(data, hint) {
-		switch (hint) {
-			case sendHints.string: return Buffer.from(data);
-			case sendHints.arrayBuffer:
-			case sendHints.blob: return new FastBuffer(data);
-			case sendHints.typedArray: return new FastBuffer(data.buffer, data.byteOffset, data.byteLength);
-		}
-	}
-	module.exports = { SendQueue };
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/websocket/websocket.js
-var require_websocket = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { webidl } = require_webidl();
-	var { URLSerializer } = require_data_url();
-	var { environmentSettingsObject } = require_util$6();
-	var { staticPropertyDescriptors, states, sentCloseFrameState, sendHints } = require_constants$1();
-	var { kWebSocketURL, kReadyState, kController, kBinaryType, kResponse, kSentClose, kByteParser } = require_symbols();
-	var { isConnecting, isEstablished, isClosing, isValidSubprotocol, fireEvent } = require_util$1();
-	var { establishWebSocketConnection, closeWebSocketConnection } = require_connection();
-	var { ByteParser } = require_receiver();
-	var { kEnumerableProperty, isBlobLike } = require_util$7();
-	var { getGlobalDispatcher } = require_global();
-	var { types } = require("node:util");
-	var { ErrorEvent, CloseEvent } = require_events();
-	var { SendQueue } = require_sender();
-	var WebSocket = class WebSocket extends EventTarget {
-		#events = {
-			open: null,
-			error: null,
-			close: null,
-			message: null
-		};
-		#bufferedAmount = 0;
-		#protocol = "";
-		#extensions = "";
-		/** @type {SendQueue} */
-		#sendQueue;
-		/**
-		* @param {string} url
-		* @param {string|string[]} protocols
-		*/
-		constructor(url, protocols = []) {
-			super();
-			webidl.util.markAsUncloneable(this);
-			const prefix = "WebSocket constructor";
-			webidl.argumentLengthCheck(arguments, 1, prefix);
-			const options = webidl.converters["DOMString or sequence<DOMString> or WebSocketInit"](protocols, prefix, "options");
-			url = webidl.converters.USVString(url, prefix, "url");
-			protocols = options.protocols;
-			const baseURL = environmentSettingsObject.settingsObject.baseUrl;
-			let urlRecord;
-			try {
-				urlRecord = new URL(url, baseURL);
-			} catch (e) {
-				throw new DOMException(e, "SyntaxError");
-			}
-			if (urlRecord.protocol === "http:") urlRecord.protocol = "ws:";
-			else if (urlRecord.protocol === "https:") urlRecord.protocol = "wss:";
-			if (urlRecord.protocol !== "ws:" && urlRecord.protocol !== "wss:") throw new DOMException(`Expected a ws: or wss: protocol, got ${urlRecord.protocol}`, "SyntaxError");
-			if (urlRecord.hash || urlRecord.href.endsWith("#")) throw new DOMException("Got fragment", "SyntaxError");
-			if (typeof protocols === "string") protocols = [protocols];
-			if (protocols.length !== new Set(protocols.map((p) => p.toLowerCase())).size) throw new DOMException("Invalid Sec-WebSocket-Protocol value", "SyntaxError");
-			if (protocols.length > 0 && !protocols.every((p) => isValidSubprotocol(p))) throw new DOMException("Invalid Sec-WebSocket-Protocol value", "SyntaxError");
-			this[kWebSocketURL] = new URL(urlRecord.href);
-			const client = environmentSettingsObject.settingsObject;
-			this[kController] = establishWebSocketConnection(urlRecord, protocols, client, this, (response, extensions) => this.#onConnectionEstablished(response, extensions), options);
-			this[kReadyState] = WebSocket.CONNECTING;
-			this[kSentClose] = sentCloseFrameState.NOT_SENT;
-			this[kBinaryType] = "blob";
-		}
-		/**
-		* @see https://websockets.spec.whatwg.org/#dom-websocket-close
-		* @param {number|undefined} code
-		* @param {string|undefined} reason
-		*/
-		close(code = void 0, reason = void 0) {
-			webidl.brandCheck(this, WebSocket);
-			const prefix = "WebSocket.close";
-			if (code !== void 0) code = webidl.converters["unsigned short"](code, prefix, "code", { clamp: true });
-			if (reason !== void 0) reason = webidl.converters.USVString(reason, prefix, "reason");
-			if (code !== void 0) {
-				if (code !== 1e3 && (code < 3e3 || code > 4999)) throw new DOMException("invalid code", "InvalidAccessError");
-			}
-			let reasonByteLength = 0;
-			if (reason !== void 0) {
-				reasonByteLength = Buffer.byteLength(reason);
-				if (reasonByteLength > 123) throw new DOMException(`Reason must be less than 123 bytes; received ${reasonByteLength}`, "SyntaxError");
-			}
-			closeWebSocketConnection(this, code, reason, reasonByteLength);
-		}
-		/**
-		* @see https://websockets.spec.whatwg.org/#dom-websocket-send
-		* @param {NodeJS.TypedArray|ArrayBuffer|Blob|string} data
-		*/
-		send(data) {
-			webidl.brandCheck(this, WebSocket);
-			const prefix = "WebSocket.send";
-			webidl.argumentLengthCheck(arguments, 1, prefix);
-			data = webidl.converters.WebSocketSendData(data, prefix, "data");
-			if (isConnecting(this)) throw new DOMException("Sent before connected.", "InvalidStateError");
-			if (!isEstablished(this) || isClosing(this)) return;
-			if (typeof data === "string") {
-				const length = Buffer.byteLength(data);
-				this.#bufferedAmount += length;
-				this.#sendQueue.add(data, () => {
-					this.#bufferedAmount -= length;
-				}, sendHints.string);
-			} else if (types.isArrayBuffer(data)) {
-				this.#bufferedAmount += data.byteLength;
-				this.#sendQueue.add(data, () => {
-					this.#bufferedAmount -= data.byteLength;
-				}, sendHints.arrayBuffer);
-			} else if (ArrayBuffer.isView(data)) {
-				this.#bufferedAmount += data.byteLength;
-				this.#sendQueue.add(data, () => {
-					this.#bufferedAmount -= data.byteLength;
-				}, sendHints.typedArray);
-			} else if (isBlobLike(data)) {
-				this.#bufferedAmount += data.size;
-				this.#sendQueue.add(data, () => {
-					this.#bufferedAmount -= data.size;
-				}, sendHints.blob);
-			}
-		}
-		get readyState() {
-			webidl.brandCheck(this, WebSocket);
-			return this[kReadyState];
-		}
-		get bufferedAmount() {
-			webidl.brandCheck(this, WebSocket);
-			return this.#bufferedAmount;
-		}
-		get url() {
-			webidl.brandCheck(this, WebSocket);
-			return URLSerializer(this[kWebSocketURL]);
-		}
-		get extensions() {
-			webidl.brandCheck(this, WebSocket);
-			return this.#extensions;
-		}
-		get protocol() {
-			webidl.brandCheck(this, WebSocket);
-			return this.#protocol;
-		}
-		get onopen() {
-			webidl.brandCheck(this, WebSocket);
-			return this.#events.open;
-		}
-		set onopen(fn) {
-			webidl.brandCheck(this, WebSocket);
-			if (this.#events.open) this.removeEventListener("open", this.#events.open);
-			if (typeof fn === "function") {
-				this.#events.open = fn;
-				this.addEventListener("open", fn);
-			} else this.#events.open = null;
-		}
-		get onerror() {
-			webidl.brandCheck(this, WebSocket);
-			return this.#events.error;
-		}
-		set onerror(fn) {
-			webidl.brandCheck(this, WebSocket);
-			if (this.#events.error) this.removeEventListener("error", this.#events.error);
-			if (typeof fn === "function") {
-				this.#events.error = fn;
-				this.addEventListener("error", fn);
-			} else this.#events.error = null;
-		}
-		get onclose() {
-			webidl.brandCheck(this, WebSocket);
-			return this.#events.close;
-		}
-		set onclose(fn) {
-			webidl.brandCheck(this, WebSocket);
-			if (this.#events.close) this.removeEventListener("close", this.#events.close);
-			if (typeof fn === "function") {
-				this.#events.close = fn;
-				this.addEventListener("close", fn);
-			} else this.#events.close = null;
-		}
-		get onmessage() {
-			webidl.brandCheck(this, WebSocket);
-			return this.#events.message;
-		}
-		set onmessage(fn) {
-			webidl.brandCheck(this, WebSocket);
-			if (this.#events.message) this.removeEventListener("message", this.#events.message);
-			if (typeof fn === "function") {
-				this.#events.message = fn;
-				this.addEventListener("message", fn);
-			} else this.#events.message = null;
-		}
-		get binaryType() {
-			webidl.brandCheck(this, WebSocket);
-			return this[kBinaryType];
-		}
-		set binaryType(type) {
-			webidl.brandCheck(this, WebSocket);
-			if (type !== "blob" && type !== "arraybuffer") this[kBinaryType] = "blob";
-			else this[kBinaryType] = type;
-		}
-		/**
-		* @see https://websockets.spec.whatwg.org/#feedback-from-the-protocol
-		*/
-		#onConnectionEstablished(response, parsedExtensions) {
-			this[kResponse] = response;
-			const webSocketOptions = this[kController]?.dispatcher?.webSocketOptions;
-			const maxFragments = webSocketOptions?.maxFragments;
-			const maxPayloadSize = webSocketOptions?.maxPayloadSize;
-			const parser = new ByteParser(this, parsedExtensions, {
-				maxFragments,
-				maxPayloadSize
-			});
-			parser.on("drain", onParserDrain);
-			parser.on("error", onParserError.bind(this));
-			response.socket.ws = this;
-			this[kByteParser] = parser;
-			this.#sendQueue = new SendQueue(response.socket);
-			this[kReadyState] = states.OPEN;
-			const extensions = response.headersList.get("sec-websocket-extensions");
-			if (extensions !== null) this.#extensions = extensions;
-			const protocol = response.headersList.get("sec-websocket-protocol");
-			if (protocol !== null) this.#protocol = protocol;
-			fireEvent("open", this);
-		}
-	};
-	WebSocket.CONNECTING = WebSocket.prototype.CONNECTING = states.CONNECTING;
-	WebSocket.OPEN = WebSocket.prototype.OPEN = states.OPEN;
-	WebSocket.CLOSING = WebSocket.prototype.CLOSING = states.CLOSING;
-	WebSocket.CLOSED = WebSocket.prototype.CLOSED = states.CLOSED;
-	Object.defineProperties(WebSocket.prototype, {
-		CONNECTING: staticPropertyDescriptors,
-		OPEN: staticPropertyDescriptors,
-		CLOSING: staticPropertyDescriptors,
-		CLOSED: staticPropertyDescriptors,
-		url: kEnumerableProperty,
-		readyState: kEnumerableProperty,
-		bufferedAmount: kEnumerableProperty,
-		onopen: kEnumerableProperty,
-		onerror: kEnumerableProperty,
-		onclose: kEnumerableProperty,
-		close: kEnumerableProperty,
-		onmessage: kEnumerableProperty,
-		binaryType: kEnumerableProperty,
-		send: kEnumerableProperty,
-		extensions: kEnumerableProperty,
-		protocol: kEnumerableProperty,
-		[Symbol.toStringTag]: {
-			value: "WebSocket",
-			writable: false,
-			enumerable: false,
-			configurable: true
-		}
-	});
-	Object.defineProperties(WebSocket, {
-		CONNECTING: staticPropertyDescriptors,
-		OPEN: staticPropertyDescriptors,
-		CLOSING: staticPropertyDescriptors,
-		CLOSED: staticPropertyDescriptors
-	});
-	webidl.converters["sequence<DOMString>"] = webidl.sequenceConverter(webidl.converters.DOMString);
-	webidl.converters["DOMString or sequence<DOMString>"] = function(V, prefix, argument) {
-		if (webidl.util.Type(V) === "Object" && Symbol.iterator in V) return webidl.converters["sequence<DOMString>"](V);
-		return webidl.converters.DOMString(V, prefix, argument);
-	};
-	webidl.converters.WebSocketInit = webidl.dictionaryConverter([
-		{
-			key: "protocols",
-			converter: webidl.converters["DOMString or sequence<DOMString>"],
-			defaultValue: () => new Array(0)
-		},
-		{
-			key: "dispatcher",
-			converter: webidl.converters.any,
-			defaultValue: () => getGlobalDispatcher()
-		},
-		{
-			key: "headers",
-			converter: webidl.nullableConverter(webidl.converters.HeadersInit)
-		}
-	]);
-	webidl.converters["DOMString or sequence<DOMString> or WebSocketInit"] = function(V) {
-		if (webidl.util.Type(V) === "Object" && !(Symbol.iterator in V)) return webidl.converters.WebSocketInit(V);
-		return { protocols: webidl.converters["DOMString or sequence<DOMString>"](V) };
-	};
-	webidl.converters.WebSocketSendData = function(V) {
-		if (webidl.util.Type(V) === "Object") {
-			if (isBlobLike(V)) return webidl.converters.Blob(V, { strict: false });
-			if (ArrayBuffer.isView(V) || types.isArrayBuffer(V)) return webidl.converters.BufferSource(V);
-		}
-		return webidl.converters.USVString(V);
-	};
-	function onParserDrain() {
-		this.ws[kResponse].socket.resume();
-	}
-	function onParserError(err) {
-		let message;
-		let code;
-		if (err instanceof CloseEvent) {
-			message = err.reason;
-			code = err.code;
-		} else message = err.message;
-		fireEvent("error", this, () => new ErrorEvent("error", {
-			error: err,
-			message
-		}));
-		closeWebSocketConnection(this, code);
-	}
-	module.exports = { WebSocket };
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/eventsource/util.js
-var require_util = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	/**
-	* Checks if the given value is a valid LastEventId.
-	* @param {string} value
-	* @returns {boolean}
-	*/
-	function isValidLastEventId(value) {
-		return value.indexOf("\0") === -1;
-	}
-	/**
-	* Checks if the given value is a base 10 digit.
-	* @param {string} value
-	* @returns {boolean}
-	*/
-	function isASCIINumber(value) {
-		if (value.length === 0) return false;
-		for (let i = 0; i < value.length; i++) if (value.charCodeAt(i) < 48 || value.charCodeAt(i) > 57) return false;
-		return true;
-	}
-	function delay(ms) {
-		return new Promise((resolve) => {
-			setTimeout(resolve, ms).unref();
-		});
-	}
-	module.exports = {
-		isValidLastEventId,
-		isASCIINumber,
-		delay
-	};
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/eventsource/eventsource-stream.js
-var require_eventsource_stream = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { Transform } = require("node:stream");
-	var { isASCIINumber, isValidLastEventId } = require_util();
-	/**
-	* @type {number[]} BOM
-	*/
-	var BOM = [
-		239,
-		187,
-		191
-	];
-	/**
-	* @type {10} LF
-	*/
-	var LF = 10;
-	/**
-	* @type {13} CR
-	*/
-	var CR = 13;
-	/**
-	* @type {58} COLON
-	*/
-	var COLON = 58;
-	/**
-	* @type {32} SPACE
-	*/
-	var SPACE = 32;
-	/**
-	* @typedef {object} EventSourceStreamEvent
-	* @type {object}
-	* @property {string} [event] The event type.
-	* @property {string} [data] The data of the message.
-	* @property {string} [id] A unique ID for the event.
-	* @property {string} [retry] The reconnection time, in milliseconds.
-	*/
-	/**
-	* @typedef eventSourceSettings
-	* @type {object}
-	* @property {string} lastEventId The last event ID received from the server.
-	* @property {string} origin The origin of the event source.
-	* @property {number} reconnectionTime The reconnection time, in milliseconds.
-	*/
-	var EventSourceStream = class extends Transform {
-		/**
-		* @type {eventSourceSettings}
-		*/
-		state = null;
-		/**
-		* Leading byte-order-mark check.
-		* @type {boolean}
-		*/
-		checkBOM = true;
-		/**
-		* @type {boolean}
-		*/
-		crlfCheck = false;
-		/**
-		* @type {boolean}
-		*/
-		eventEndCheck = false;
-		/**
-		* @type {Buffer}
-		*/
-		buffer = null;
-		pos = 0;
-		event = {
-			data: void 0,
-			event: void 0,
-			id: void 0,
-			retry: void 0
-		};
-		/**
-		* @param {object} options
-		* @param {eventSourceSettings} options.eventSourceSettings
-		* @param {Function} [options.push]
-		*/
-		constructor(options = {}) {
-			options.readableObjectMode = true;
-			super(options);
-			this.state = options.eventSourceSettings || {};
-			if (options.push) this.push = options.push;
-		}
-		/**
-		* @param {Buffer} chunk
-		* @param {string} _encoding
-		* @param {Function} callback
-		* @returns {void}
-		*/
-		_transform(chunk, _encoding, callback) {
-			if (chunk.length === 0) {
-				callback();
-				return;
-			}
-			if (this.buffer) this.buffer = Buffer.concat([this.buffer, chunk]);
-			else this.buffer = chunk;
-			if (this.checkBOM) switch (this.buffer.length) {
-				case 1:
-					if (this.buffer[0] === BOM[0]) {
-						callback();
-						return;
-					}
-					this.checkBOM = false;
-					callback();
-					return;
-				case 2:
-					if (this.buffer[0] === BOM[0] && this.buffer[1] === BOM[1]) {
-						callback();
-						return;
-					}
-					this.checkBOM = false;
-					break;
-				case 3:
-					if (this.buffer[0] === BOM[0] && this.buffer[1] === BOM[1] && this.buffer[2] === BOM[2]) {
-						this.buffer = Buffer.alloc(0);
-						this.checkBOM = false;
-						callback();
-						return;
-					}
-					this.checkBOM = false;
-					break;
-				default:
-					if (this.buffer[0] === BOM[0] && this.buffer[1] === BOM[1] && this.buffer[2] === BOM[2]) this.buffer = this.buffer.subarray(3);
-					this.checkBOM = false;
-					break;
-			}
-			while (this.pos < this.buffer.length) {
-				if (this.eventEndCheck) {
-					if (this.crlfCheck) {
-						if (this.buffer[this.pos] === LF) {
-							this.buffer = this.buffer.subarray(this.pos + 1);
-							this.pos = 0;
-							this.crlfCheck = false;
-							continue;
-						}
-						this.crlfCheck = false;
-					}
-					if (this.buffer[this.pos] === LF || this.buffer[this.pos] === CR) {
-						if (this.buffer[this.pos] === CR) this.crlfCheck = true;
-						this.buffer = this.buffer.subarray(this.pos + 1);
-						this.pos = 0;
-						if (this.event.data !== void 0 || this.event.event || this.event.id || this.event.retry) this.processEvent(this.event);
-						this.clearEvent();
-						continue;
-					}
-					this.eventEndCheck = false;
-					continue;
-				}
-				if (this.buffer[this.pos] === LF || this.buffer[this.pos] === CR) {
-					if (this.buffer[this.pos] === CR) this.crlfCheck = true;
-					this.parseLine(this.buffer.subarray(0, this.pos), this.event);
-					this.buffer = this.buffer.subarray(this.pos + 1);
-					this.pos = 0;
-					this.eventEndCheck = true;
-					continue;
-				}
-				this.pos++;
-			}
-			callback();
-		}
-		/**
-		* @param {Buffer} line
-		* @param {EventStreamEvent} event
-		*/
-		parseLine(line, event) {
-			if (line.length === 0) return;
-			const colonPosition = line.indexOf(COLON);
-			if (colonPosition === 0) return;
-			let field = "";
-			let value = "";
-			if (colonPosition !== -1) {
-				field = line.subarray(0, colonPosition).toString("utf8");
-				let valueStart = colonPosition + 1;
-				if (line[valueStart] === SPACE) ++valueStart;
-				value = line.subarray(valueStart).toString("utf8");
-			} else {
-				field = line.toString("utf8");
-				value = "";
-			}
-			switch (field) {
-				case "data":
-					if (event[field] === void 0) event[field] = value;
-					else event[field] += `\n${value}`;
-					break;
-				case "retry":
-					if (isASCIINumber(value)) event[field] = value;
-					break;
-				case "id":
-					if (isValidLastEventId(value)) event[field] = value;
-					break;
-				case "event":
-					if (value.length > 0) event[field] = value;
-					break;
-			}
-		}
-		/**
-		* @param {EventSourceStreamEvent} event
-		*/
-		processEvent(event) {
-			if (event.retry && isASCIINumber(event.retry)) this.state.reconnectionTime = parseInt(event.retry, 10);
-			if (event.id && isValidLastEventId(event.id)) this.state.lastEventId = event.id;
-			if (event.data !== void 0) this.push({
-				type: event.event || "message",
-				options: {
-					data: event.data,
-					lastEventId: this.state.lastEventId,
-					origin: this.state.origin
-				}
-			});
-		}
-		clearEvent() {
-			this.event = {
-				data: void 0,
-				event: void 0,
-				id: void 0,
-				retry: void 0
-			};
-		}
-	};
-	module.exports = { EventSourceStream };
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/lib/web/eventsource/eventsource.js
-var require_eventsource = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var { pipeline } = require("node:stream");
-	var { fetching } = require_fetch();
-	var { makeRequest } = require_request();
-	var { webidl } = require_webidl();
-	var { EventSourceStream } = require_eventsource_stream();
-	var { parseMIMEType } = require_data_url();
-	var { createFastMessageEvent } = require_events();
-	var { isNetworkError } = require_response();
-	var { delay } = require_util();
-	var { kEnumerableProperty } = require_util$7();
-	var { environmentSettingsObject } = require_util$6();
-	var experimentalWarned = false;
-	/**
-	* A reconnection time, in milliseconds. This must initially be an implementation-defined value,
-	* probably in the region of a few seconds.
-	*
-	* In Comparison:
-	* - Chrome uses 3000ms.
-	* - Deno uses 5000ms.
-	*
-	* @type {3000}
-	*/
-	var defaultReconnectionTime = 3e3;
-	/**
-	* The readyState attribute represents the state of the connection.
-	* @enum
-	* @readonly
-	* @see https://html.spec.whatwg.org/multipage/server-sent-events.html#dom-eventsource-readystate-dev
-	*/
-	/**
-	* The connection has not yet been established, or it was closed and the user
-	* agent is reconnecting.
-	* @type {0}
-	*/
-	var CONNECTING = 0;
-	/**
-	* The user agent has an open connection and is dispatching events as it
-	* receives them.
-	* @type {1}
-	*/
-	var OPEN = 1;
-	/**
-	* The connection is not open, and the user agent is not trying to reconnect.
-	* @type {2}
-	*/
-	var CLOSED = 2;
-	/**
-	* Requests for the element will have their mode set to "cors" and their credentials mode set to "same-origin".
-	* @type {'anonymous'}
-	*/
-	var ANONYMOUS = "anonymous";
-	/**
-	* Requests for the element will have their mode set to "cors" and their credentials mode set to "include".
-	* @type {'use-credentials'}
-	*/
-	var USE_CREDENTIALS = "use-credentials";
-	/**
-	* The EventSource interface is used to receive server-sent events. It
-	* connects to a server over HTTP and receives events in text/event-stream
-	* format without closing the connection.
-	* @extends {EventTarget}
-	* @see https://html.spec.whatwg.org/multipage/server-sent-events.html#server-sent-events
-	* @api public
-	*/
-	var EventSource = class EventSource extends EventTarget {
-		#events = {
-			open: null,
-			error: null,
-			message: null
-		};
-		#url = null;
-		#withCredentials = false;
-		#readyState = CONNECTING;
-		#request = null;
-		#controller = null;
-		#dispatcher;
-		/**
-		* @type {import('./eventsource-stream').eventSourceSettings}
-		*/
-		#state;
-		/**
-		* Creates a new EventSource object.
-		* @param {string} url
-		* @param {EventSourceInit} [eventSourceInitDict]
-		* @see https://html.spec.whatwg.org/multipage/server-sent-events.html#the-eventsource-interface
-		*/
-		constructor(url, eventSourceInitDict = {}) {
-			super();
-			webidl.util.markAsUncloneable(this);
-			const prefix = "EventSource constructor";
-			webidl.argumentLengthCheck(arguments, 1, prefix);
-			if (!experimentalWarned) {
-				experimentalWarned = true;
-				process.emitWarning("EventSource is experimental, expect them to change at any time.", { code: "UNDICI-ES" });
-			}
-			url = webidl.converters.USVString(url, prefix, "url");
-			eventSourceInitDict = webidl.converters.EventSourceInitDict(eventSourceInitDict, prefix, "eventSourceInitDict");
-			this.#dispatcher = eventSourceInitDict.dispatcher;
-			this.#state = {
-				lastEventId: "",
-				reconnectionTime: defaultReconnectionTime
-			};
-			const settings = environmentSettingsObject;
-			let urlRecord;
-			try {
-				urlRecord = new URL(url, settings.settingsObject.baseUrl);
-				this.#state.origin = urlRecord.origin;
-			} catch (e) {
-				throw new DOMException(e, "SyntaxError");
-			}
-			this.#url = urlRecord.href;
-			let corsAttributeState = ANONYMOUS;
-			if (eventSourceInitDict.withCredentials) {
-				corsAttributeState = USE_CREDENTIALS;
-				this.#withCredentials = true;
-			}
-			const initRequest = {
-				redirect: "follow",
-				keepalive: true,
-				mode: "cors",
-				credentials: corsAttributeState === "anonymous" ? "same-origin" : "omit",
-				referrer: "no-referrer"
-			};
-			initRequest.client = environmentSettingsObject.settingsObject;
-			initRequest.headersList = [["accept", {
-				name: "accept",
-				value: "text/event-stream"
-			}]];
-			initRequest.cache = "no-store";
-			initRequest.initiator = "other";
-			initRequest.urlList = [new URL(this.#url)];
-			this.#request = makeRequest(initRequest);
-			this.#connect();
-		}
-		/**
-		* Returns the state of this EventSource object's connection. It can have the
-		* values described below.
-		* @returns {0|1|2}
-		* @readonly
-		*/
-		get readyState() {
-			return this.#readyState;
-		}
-		/**
-		* Returns the URL providing the event stream.
-		* @readonly
-		* @returns {string}
-		*/
-		get url() {
-			return this.#url;
-		}
-		/**
-		* Returns a boolean indicating whether the EventSource object was
-		* instantiated with CORS credentials set (true), or not (false, the default).
-		*/
-		get withCredentials() {
-			return this.#withCredentials;
-		}
-		#connect() {
-			if (this.#readyState === CLOSED) return;
-			this.#readyState = CONNECTING;
-			const fetchParams = {
-				request: this.#request,
-				dispatcher: this.#dispatcher
-			};
-			const processEventSourceEndOfBody = (response) => {
-				if (isNetworkError(response)) {
-					this.dispatchEvent(new Event("error"));
-					this.close();
-				}
-				this.#reconnect();
-			};
-			fetchParams.processResponseEndOfBody = processEventSourceEndOfBody;
-			fetchParams.processResponse = (response) => {
-				if (isNetworkError(response)) if (response.aborted) {
-					this.close();
-					this.dispatchEvent(new Event("error"));
-					return;
-				} else {
-					this.#reconnect();
-					return;
-				}
-				const contentType = response.headersList.get("content-type", true);
-				const mimeType = contentType !== null ? parseMIMEType(contentType) : "failure";
-				const contentTypeValid = mimeType !== "failure" && mimeType.essence === "text/event-stream";
-				if (response.status !== 200 || contentTypeValid === false) {
-					this.close();
-					this.dispatchEvent(new Event("error"));
-					return;
-				}
-				this.#readyState = OPEN;
-				this.dispatchEvent(new Event("open"));
-				this.#state.origin = response.urlList[response.urlList.length - 1].origin;
-				const eventSourceStream = new EventSourceStream({
-					eventSourceSettings: this.#state,
-					push: (event) => {
-						this.dispatchEvent(createFastMessageEvent(event.type, event.options));
-					}
-				});
-				pipeline(response.body.stream, eventSourceStream, (error) => {
-					if (error?.aborted === false) {
-						this.close();
-						this.dispatchEvent(new Event("error"));
-					}
-				});
-			};
-			this.#controller = fetching(fetchParams);
-		}
-		/**
-		* @see https://html.spec.whatwg.org/multipage/server-sent-events.html#sse-processing-model
-		* @returns {Promise<void>}
-		*/
-		async #reconnect() {
-			if (this.#readyState === CLOSED) return;
-			this.#readyState = CONNECTING;
-			this.dispatchEvent(new Event("error"));
-			await delay(this.#state.reconnectionTime);
-			if (this.#readyState !== CONNECTING) return;
-			if (this.#state.lastEventId.length) this.#request.headersList.set("last-event-id", this.#state.lastEventId, true);
-			this.#connect();
-		}
-		/**
-		* Closes the connection, if any, and sets the readyState attribute to
-		* CLOSED.
-		*/
-		close() {
-			webidl.brandCheck(this, EventSource);
-			if (this.#readyState === CLOSED) return;
-			this.#readyState = CLOSED;
-			this.#controller.abort();
-			this.#request = null;
-		}
-		get onopen() {
-			return this.#events.open;
-		}
-		set onopen(fn) {
-			if (this.#events.open) this.removeEventListener("open", this.#events.open);
-			if (typeof fn === "function") {
-				this.#events.open = fn;
-				this.addEventListener("open", fn);
-			} else this.#events.open = null;
-		}
-		get onmessage() {
-			return this.#events.message;
-		}
-		set onmessage(fn) {
-			if (this.#events.message) this.removeEventListener("message", this.#events.message);
-			if (typeof fn === "function") {
-				this.#events.message = fn;
-				this.addEventListener("message", fn);
-			} else this.#events.message = null;
-		}
-		get onerror() {
-			return this.#events.error;
-		}
-		set onerror(fn) {
-			if (this.#events.error) this.removeEventListener("error", this.#events.error);
-			if (typeof fn === "function") {
-				this.#events.error = fn;
-				this.addEventListener("error", fn);
-			} else this.#events.error = null;
-		}
-	};
-	var constantsPropertyDescriptors = {
-		CONNECTING: {
-			__proto__: null,
-			configurable: false,
-			enumerable: true,
-			value: CONNECTING,
-			writable: false
-		},
-		OPEN: {
-			__proto__: null,
-			configurable: false,
-			enumerable: true,
-			value: OPEN,
-			writable: false
-		},
-		CLOSED: {
-			__proto__: null,
-			configurable: false,
-			enumerable: true,
-			value: CLOSED,
-			writable: false
-		}
-	};
-	Object.defineProperties(EventSource, constantsPropertyDescriptors);
-	Object.defineProperties(EventSource.prototype, constantsPropertyDescriptors);
-	Object.defineProperties(EventSource.prototype, {
-		close: kEnumerableProperty,
-		onerror: kEnumerableProperty,
-		onmessage: kEnumerableProperty,
-		onopen: kEnumerableProperty,
-		readyState: kEnumerableProperty,
-		url: kEnumerableProperty,
-		withCredentials: kEnumerableProperty
-	});
-	webidl.converters.EventSourceInitDict = webidl.dictionaryConverter([{
-		key: "withCredentials",
-		converter: webidl.converters.boolean,
-		defaultValue: () => false
-	}, {
-		key: "dispatcher",
-		converter: webidl.converters.any
-	}]);
-	module.exports = {
-		EventSource,
-		defaultReconnectionTime
-	};
-}));
-//#endregion
-//#region node_modules/.aube/undici@6.27.0/node_modules/undici/index.js
-var require_undici = /* @__PURE__ */ __commonJSMin(((exports, module) => {
-	var Client = require_client();
-	var Dispatcher = require_dispatcher();
-	var Pool = require_pool();
-	var BalancedPool = require_balanced_pool();
-	var Agent = require_agent();
-	var ProxyAgent = require_proxy_agent();
-	var EnvHttpProxyAgent = require_env_http_proxy_agent();
-	var RetryAgent = require_retry_agent();
-	var errors = require_errors();
-	var util = require_util$7();
-	var { InvalidArgumentError } = errors;
-	var api = require_api();
-	var buildConnector = require_connect();
-	var MockClient = require_mock_client();
-	var MockAgent = require_mock_agent();
-	var MockPool = require_mock_pool();
-	var mockErrors = require_mock_errors();
-	var RetryHandler = require_retry_handler();
-	var { getGlobalDispatcher, setGlobalDispatcher } = require_global();
-	var DecoratorHandler = require_decorator_handler();
-	var RedirectHandler = require_redirect_handler();
-	var createRedirectInterceptor = require_redirect_interceptor();
-	Object.assign(Dispatcher.prototype, api);
-	module.exports.Dispatcher = Dispatcher;
-	module.exports.Client = Client;
-	module.exports.Pool = Pool;
-	module.exports.BalancedPool = BalancedPool;
-	module.exports.Agent = Agent;
-	module.exports.ProxyAgent = ProxyAgent;
-	module.exports.EnvHttpProxyAgent = EnvHttpProxyAgent;
-	module.exports.RetryAgent = RetryAgent;
-	module.exports.RetryHandler = RetryHandler;
-	module.exports.DecoratorHandler = DecoratorHandler;
-	module.exports.RedirectHandler = RedirectHandler;
-	module.exports.createRedirectInterceptor = createRedirectInterceptor;
-	module.exports.interceptors = {
-		redirect: require_redirect(),
-		retry: require_retry(),
-		dump: require_dump(),
-		dns: require_dns()
-	};
-	module.exports.buildConnector = buildConnector;
-	module.exports.errors = errors;
-	module.exports.util = {
-		parseHeaders: util.parseHeaders,
-		headerNameToString: util.headerNameToString
-	};
-	function makeDispatcher(fn) {
-		return (url, opts, handler) => {
-			if (typeof opts === "function") {
-				handler = opts;
-				opts = null;
-			}
-			if (!url || typeof url !== "string" && typeof url !== "object" && !(url instanceof URL)) throw new InvalidArgumentError("invalid url");
-			if (opts != null && typeof opts !== "object") throw new InvalidArgumentError("invalid opts");
-			if (opts && opts.path != null) {
-				if (typeof opts.path !== "string") throw new InvalidArgumentError("invalid opts.path");
-				let path = opts.path;
-				if (!opts.path.startsWith("/")) path = `/${path}`;
-				url = new URL(util.parseOrigin(url).origin + path);
-			} else {
-				if (!opts) opts = typeof url === "object" ? url : {};
-				url = util.parseURL(url);
-			}
-			const { agent, dispatcher = getGlobalDispatcher() } = opts;
-			if (agent) throw new InvalidArgumentError("unsupported opts.agent. Did you mean opts.client?");
-			return fn.call(dispatcher, {
-				...opts,
-				origin: url.origin,
-				path: url.search ? `${url.pathname}${url.search}` : url.pathname,
-				method: opts.method || (opts.body ? "PUT" : "GET")
-			}, handler);
-		};
-	}
-	module.exports.setGlobalDispatcher = setGlobalDispatcher;
-	module.exports.getGlobalDispatcher = getGlobalDispatcher;
-	var fetchImpl = require_fetch().fetch;
-	module.exports.fetch = async function fetch(init, options = void 0) {
-		try {
-			return await fetchImpl(init, options);
-		} catch (err) {
-			if (err && typeof err === "object") Error.captureStackTrace(err);
-			throw err;
-		}
-	};
-	module.exports.Headers = require_headers().Headers;
-	module.exports.Response = require_response().Response;
-	module.exports.Request = require_request().Request;
-	module.exports.FormData = require_formdata().FormData;
-	module.exports.File = globalThis.File ?? require("node:buffer").File;
-	module.exports.FileReader = require_filereader().FileReader;
-	var { setGlobalOrigin, getGlobalOrigin } = require_global$1();
-	module.exports.setGlobalOrigin = setGlobalOrigin;
-	module.exports.getGlobalOrigin = getGlobalOrigin;
-	var { CacheStorage } = require_cachestorage();
-	var { kConstruct } = require_symbols$1();
-	module.exports.caches = new CacheStorage(kConstruct);
-	var { deleteCookie, getCookies, getSetCookies, setCookie } = require_cookies();
-	module.exports.deleteCookie = deleteCookie;
-	module.exports.getCookies = getCookies;
-	module.exports.getSetCookies = getSetCookies;
-	module.exports.setCookie = setCookie;
-	var { parseMIMEType, serializeAMimeType } = require_data_url();
-	module.exports.parseMIMEType = parseMIMEType;
-	module.exports.serializeAMimeType = serializeAMimeType;
-	var { CloseEvent, ErrorEvent, MessageEvent } = require_events();
-	module.exports.WebSocket = require_websocket().WebSocket;
-	module.exports.CloseEvent = CloseEvent;
-	module.exports.ErrorEvent = ErrorEvent;
-	module.exports.MessageEvent = MessageEvent;
-	module.exports.request = makeDispatcher(api.request);
-	module.exports.stream = makeDispatcher(api.stream);
-	module.exports.pipeline = makeDispatcher(api.pipeline);
-	module.exports.connect = makeDispatcher(api.connect);
-	module.exports.upgrade = makeDispatcher(api.upgrade);
-	module.exports.MockClient = MockClient;
-	module.exports.MockPool = MockPool;
-	module.exports.MockAgent = MockAgent;
-	module.exports.mockErrors = mockErrors;
-	var { EventSource } = require_eventsource();
-	module.exports.EventSource = EventSource;
+//#region src/shims/undici-action-exports.ts
+var undici_action_exports_exports = /* @__PURE__ */ __exportAll({
+	ProxyAgent: () => import_proxy_agent.default,
+	fetch: () => import_fetch.fetch
+});
+var import_proxy_agent, import_fetch;
+var init_undici_action_exports = __esmMin((() => {
+	import_proxy_agent = /* @__PURE__ */ __toESM(require_proxy_agent(), 1);
+	import_fetch = require_fetch();
 }));
 require_tunnel();
-var import_undici = require_undici();
+init_undici_action_exports();
 var HttpCodes;
 (function(HttpCodes) {
 	HttpCodes[HttpCodes["OK"] = 200] = "OK";
@@ -16780,7 +10413,7 @@ var import_lib = /* @__PURE__ */ __toESM((/* @__PURE__ */ __commonJSMin(((export
 	var https$1 = __importStar(require("https"));
 	var pm = __importStar(require_proxy());
 	var tunnel = __importStar(require_tunnel());
-	var undici_1 = require_undici();
+	var undici_1 = (init_undici_action_exports(), __toCommonJS(undici_action_exports_exports));
 	var HttpCodes;
 	(function(HttpCodes) {
 		HttpCodes[HttpCodes["OK"] = 200] = "OK";
@@ -17289,6 +10922,7 @@ var import_lib = /* @__PURE__ */ __toESM((/* @__PURE__ */ __commonJSMin(((export
 	exports.HttpClient = HttpClient;
 	var lowercaseKeys = (obj) => Object.keys(obj).reduce((c, k) => (c[k.toLowerCase()] = obj[k], c), {});
 })))(), 1);
+init_undici_action_exports();
 var __awaiter = function(thisArg, _arguments, P, generator) {
 	function adopt(value) {
 		return value instanceof P ? value : new P(function(resolve) {
@@ -17330,7 +10964,7 @@ function getProxyAgentDispatcher(destinationUrl) {
 function getProxyFetch(destinationUrl) {
 	const httpDispatcher = getProxyAgentDispatcher(destinationUrl);
 	const proxyFetch = (url, opts) => __awaiter(this, void 0, void 0, function* () {
-		return (0, import_undici.fetch)(url, Object.assign(Object.assign({}, opts), { dispatcher: httpDispatcher }));
+		return (0, import_fetch.fetch)(url, Object.assign(Object.assign({}, opts), { dispatcher: httpDispatcher }));
 	});
 	return proxyFetch;
 }
