@@ -1,3 +1,4 @@
+---
 name: Mise Update Tool
 description: >-
   Upgrade mise tools from the local config using `mise upgrade --bump --local`

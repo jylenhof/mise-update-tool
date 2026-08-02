@@ -1,3 +1,4 @@
+---
 name: Code Checks
 on:
   push:
@@ -65,7 +66,7 @@ jobs:
     permissions:
       contents: read
     needs:
-    - prek-checks
+      - prek-checks
     steps:
       - name: "Cleaning up"
         uses: gacts/run-and-post-run@598d7a875d5620e0457490555b5e18e46082aa47 # v1.4.4
