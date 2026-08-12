@@ -4,10 +4,17 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
-      day: monday
+      interval: daily
+      time: "06:00"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 5
+    reviewers:
+      - jylenhof
+    assignees:
+      - jylenhof
     commit-message:
       prefix: "chore"
+      include: "scope"
     labels:
       - dependencies
     groups:
@@ -19,10 +26,17 @@ updates:
   - package-ecosystem: pre-commit
     directory: /
     schedule:
-      interval: weekly
-      day: monday
+      interval: daily
+      time: "06:00"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 5
+    reviewers:
+      - jylenhof
+    assignees:
+      - jylenhof
     commit-message:
       prefix: "chore"
+      include: "scope"
     labels:
       - dependencies
     groups:
@@ -31,5 +45,26 @@ updates:
           - '*'
     cooldown:
       default-days: 7
-
-      ##### TODO need typescript here somewhere
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: daily
+      time: "06:00"
+      timezone: Europe/Paris
+    open-pull-requests-limit: 5
+    reviewers:
+      - jylenhof
+    assignees:
+      - jylenhof
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    labels:
+      - dependencies
+    versioning-strategy: increase
+    groups:
+      deps-npm:
+        patterns:
+          - '*'
+    cooldown:
+      default-days: 7
