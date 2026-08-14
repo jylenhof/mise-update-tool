@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.3](https://github.com/jylenhof/mise-update-tool/compare/v1.0.2...v1.0.3) (2026-08-14)
+
+
+### Bug Fixes
+
+* **workflow:** add missing step on mise update workflow ([#16](https://github.com/jylenhof/mise-update-tool/issues/16)) ([a78fc7c](https://github.com/jylenhof/mise-update-tool/commit/a78fc7c76ab8ef07cf020527dd3cea7a4148f7d4))
+* **workflow:** really node exception ([#25](https://github.com/jylenhof/mise-update-tool/issues/25)) ([c35a80a](https://github.com/jylenhof/mise-update-tool/commit/c35a80ae822e11864563372b42153a6a43254ca4))
+
 ## [1.0.2](https://github.com/jylenhof/mise-update-tool/compare/v1.0.1...v1.0.2) (2026-07-17)
 
 
