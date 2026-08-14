@@ -35,6 +35,7 @@ describe('PullRequestCreator', () => {
   describe('buildBody', () => {
     it('builds a body for all eligible tools when none are listed', () => {
       const body = PullRequestCreator.buildBody([], []);
+      expect(body).toContain('mise-managed tools:');
       expect(body).toContain('- all eligible local tools');
       expect(body).toContain('`mise upgrade --bump --local`');
     });

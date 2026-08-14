@@ -21301,7 +21301,7 @@ var PullRequestCreator = class PullRequestCreator {
 		const sections = [
 			"Automated mise tool upgrades from local config.",
 			"",
-			"Updated tools:",
+			"mise-managed tools:",
 			updatedTools.length > 0 ? updatedTools.map((tool) => `- \`${tool}\``).join("\n") : "- all eligible local tools",
 			"",
 			`Command: \`${updatedTools.length === 1 ? `mise upgrade --bump --local ${updatedTools[0]}` : `mise upgrade --bump --local${updatedTools.length > 0 ? ` ${updatedTools.join(" ")}` : ""}`}\``

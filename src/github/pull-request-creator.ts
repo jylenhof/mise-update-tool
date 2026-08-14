@@ -56,7 +56,7 @@ export class PullRequestCreator {
     const sections = [
       'Automated mise tool upgrades from local config.',
       '',
-      'Updated tools:',
+      'mise-managed tools:',
       toolLines,
       '',
       `Command: \`${command}\``,
