@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.4](https://github.com/jylenhof/mise-update-tool/compare/v1.0.3...v1.0.4) (2026-08-17)
+
+
+### Bug Fixes
+
+* only use nodejs 24 types related to nodejs 24 ([#43](https://github.com/jylenhof/mise-update-tool/issues/43)) ([657d6d2](https://github.com/jylenhof/mise-update-tool/commit/657d6d2d804e5c4583161ed590e98ea0e5fe808b))
+
 ## [1.0.3](https://github.com/jylenhof/mise-update-tool/compare/v1.0.2...v1.0.3) (2026-08-14)
 
 
