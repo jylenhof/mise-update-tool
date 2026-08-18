@@ -17609,7 +17609,7 @@ var endpoint = withDefaults$2(null, DEFAULTS);
 * MIT Licensed
 */
 //#endregion
-//#region node_modules/.aube/json-with-bigint@3.5.11/node_modules/json-with-bigint/json-with-bigint.js
+//#region node_modules/.aube/json-with-bigint@3.5.12/node_modules/json-with-bigint/json-with-bigint.js
 var import_dist = (/* @__PURE__ */ __commonJSMin(((exports) => {
 	Object.defineProperty(exports, "__esModule", { value: true });
 	exports.parse = parse;
@@ -18004,7 +18004,7 @@ var JSONParseV2 = (text, reviver) => {
 };
 var MAX_INT = Number.MAX_SAFE_INTEGER.toString();
 var MAX_DIGITS = MAX_INT.length;
-var stringsOrLargeNumbers = /"(?:\\.|[^"])*"|-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?/g;
+var stringsOrLargeNumbers = /"(?:[^"\\]|\\.)*"|-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?/g;
 var noiseValueWithQuotes = /^"-?\d+n+"$/;
 /**
 * Iteratively traverses the parsed object bottom-up (post-order),
