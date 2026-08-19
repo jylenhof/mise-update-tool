@@ -18123,8 +18123,8 @@ var RequestError = class extends Error {
 	}
 };
 //#endregion
-//#region node_modules/.aube/@octokit+request@10.0.13/node_modules/@octokit/request/dist-bundle/index.js
-var defaults_default = { headers: { "user-agent": `octokit-request.js/10.0.13 ${getUserAgent()}` } };
+//#region node_modules/.aube/@octokit+request@10.0.14/node_modules/@octokit/request/dist-bundle/index.js
+var defaults_default = { headers: { "user-agent": `octokit-request.js/10.0.14 ${getUserAgent()}` } };
 function isPlainObject(value) {
 	if (typeof value !== "object" || value === null) return false;
 	if (Object.prototype.toString.call(value) !== "[object Object]") return false;
