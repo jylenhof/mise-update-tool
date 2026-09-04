@@ -16,5 +16,8 @@ trim_trailing_whitespace = true
 [*.md]
 max_line_length = unset
 
+[{.github/workflows/*,.github/actions/**,action.yml,action.yaml}]
+max_line_length = unset
+
 # Exclude own LICENSE format
 [LICENSE]
