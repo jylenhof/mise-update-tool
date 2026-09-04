@@ -21,6 +21,9 @@ updates:
       deps-external:
         patterns:
           - '*'
+        update-types:
+          - "minor"
+          - "patch"
     cooldown:
       default-days: 7
   - package-ecosystem: pre-commit
@@ -43,6 +46,9 @@ updates:
       deps-pre-commit:
         patterns:
           - '*'
+        update-types:
+          - "minor"
+          - "patch"
     cooldown:
       default-days: 7
   - package-ecosystem: npm
@@ -69,5 +75,8 @@ updates:
       deps-npm:
         patterns:
           - '*'
+        update-types:
+          - "minor"
+          - "patch"
     cooldown:
       default-days: 7
