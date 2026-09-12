@@ -18,10 +18,19 @@ on:
         description: Use single for one PR with all tools, or per-tool for one PR per tool.
         required: false
         default: single
+      mise_cache:
+        description: Override mise-action cache option.
+        required: false
+        type: boolean
+        default: true
+      mise_version:
+        description: Override mise-action version option.
+        required: false
+        type: string
+        default: ''
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   upgrade:
@@ -56,6 +65,10 @@ jobs:
 
       - name: Install mise
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          cache: ${{ github.event_name == 'workflow_dispatch' && toJSON(inputs.mise_cache) || vars.MISE_CACHE || 'true' }}
+          cache_key_prefix: mise-v1-mise-update.yaml
+          version: ${{ inputs.mise_version || vars.MISE_VERSION }}
 
       - name: Upgrade local mise tools
         uses: $/.
