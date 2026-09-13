@@ -117,3 +117,4 @@ jobs:
         with:
           name: action-distribution
           path: dist/
+          retention-days: 7
