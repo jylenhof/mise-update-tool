@@ -22,7 +22,7 @@ importers:
         specifier: ^2.5.14
         version: 2.5.14
       '@semantic-release/github':
-        specifier: ^12.0.9
+        specifier: ^12.0.10
         version: 12.0.10(semantic-release@25.0.9)
       '@types/node':
         specifier: ^24.13.6
