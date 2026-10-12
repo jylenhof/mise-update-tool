@@ -76,7 +76,7 @@ repos:
         files: '\.github/workflows/.*\.(yaml|yml)$'
       - id: jactionlint
         name: jactionlint
-        entry: jactionlint -ignore 'specifying action "\$/.+" in invalid format because ref is missing'
+        entry: jactionlint
         language: system
         files: '\.github/workflows/.*\.(yaml|yml)$'
       # pinact does not handle branch version
