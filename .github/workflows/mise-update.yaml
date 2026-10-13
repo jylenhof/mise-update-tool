@@ -71,7 +71,7 @@ jobs:
           version: ${{ inputs.mise_version || vars.MISE_VERSION }}
 
       - name: Upgrade local mise tools
-        uses: $/.
+        uses: $/
         with:
           token: ${{ steps.generate-token.outputs.token }}
           tools: ${{ inputs.tools || '' }}
