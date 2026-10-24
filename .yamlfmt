@@ -9,4 +9,4 @@ formatter:
   trim_trailing_whitespace: true
   eof_newlines: true
 exclude:
-- aube-lock.yaml
+- pnpm-lock.yaml
