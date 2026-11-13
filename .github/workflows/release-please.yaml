@@ -11,10 +11,14 @@ permissions:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
-
+defaults:
+  run:
+    shell: bash --noprofile --norc -eo pipefail {0}
 jobs:
   release-please:
-    runs-on: ubuntu-latest
+    name: Release Please
+    runs-on: ubuntu-24.04
+    environment: github-app
     timeout-minutes: 10
     steps:
       - name: Checkout repository
@@ -39,5 +43,5 @@ jobs:
       - name: Release Please
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
-          release-type: node
+          release-type: python
           token: ${{ steps.generate-token.outputs.token }}

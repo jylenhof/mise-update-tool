@@ -27,7 +27,9 @@ on:
 
 permissions:
   contents: read
-
+defaults:
+  run:
+    shell: bash --noprofile --norc -eo pipefail {0}
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -35,12 +37,12 @@ concurrency:
 jobs:
   prek-checks:
     name: Prek Checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
     steps:
-      - name: "Cleaning up"
+      - name: Cleaning up
         uses: gacts/run-and-post-run@fc6503862aba998e2f2123225ad63c09a92ed46e # v1.4.5
         with:
           run: |
@@ -60,11 +62,7 @@ jobs:
         env:
           MISE_INSTALL_FROM_GITHUB: 1
         with:
-          # Disable cache on tag publishes so a poisoned mise cache cannot
-          # be restored into the uploaded distribution (zizmor
-          # cache-poisoning). PRs and branch pushes may still cache.
-          cache: ${{ !startsWith(github.ref, 'refs/tags/') }}
-          cache_key_prefix: mise-v1-code-checks.yml
+          cache: false
           version: ${{ inputs.mise_version || vars.MISE_VERSION }}
 
       - name: Run prek checks
@@ -74,14 +72,14 @@ jobs:
 
   build:
     name: Build TypeScript distribution
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
     needs:
       - prek-checks
     steps:
-      - name: "Cleaning up"
+      - name: Cleaning up
         uses: gacts/run-and-post-run@fc6503862aba998e2f2123225ad63c09a92ed46e # v1.4.5
         with:
           run: |
@@ -113,8 +111,9 @@ jobs:
 
       - name: Store the distribution packages
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2 # gh-action-pulse: ignore[max-age]
-        if: startsWith(github.ref, 'refs/tags') || inputs.force_release == true
+        if: ${{ startsWith(github.ref, 'refs/tags') || inputs.force_release == true }}
         with:
           name: action-distribution
           path: dist/
           retention-days: 7
+          if-no-files-found: error
